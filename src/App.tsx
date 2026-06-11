@@ -259,25 +259,20 @@ export default function ServiceTracker() {
     setShowStockForm(false);
   }
 
-  function saveCustomer() {
+function saveCustomer() {
     if (!customerForm.name.trim()) return;
-    let updated;
     if (editCustomerId !== null) {
-      updated = customers.map(c => c.id === editCustomerId ? { ...customerForm, id: editCustomerId } : c);
+      const updatedCustomer = { ...customerForm, id: editCustomerId };
+      setCustomers(cs => cs.map(c => c.id === editCustomerId ? updatedCustomer : c));
+      postToSheet({ action: "updateCustomer", customer: updatedCustomer });
       setEditCustomerId(null);
     } else {
-      updated = [...customers, { ...customerForm, id: Date.now() }];
+      const newCustomer = { ...customerForm, id: Date.now() };
+      setCustomers(cs => [...cs, newCustomer]);
+      postToSheet({ action: "addCustomer", customer: newCustomer });
     }
-    setCustomers(updated);
-    postToSheet({ action: "updateCustomers", customers: updated });
     setCustomerForm({ ...emptyCustomer });
     setShowCustomerForm(false);
-  }
-
-  function deleteCustomer(id) {
-    const updated = customers.filter(c => c.id !== id);
-    setCustomers(updated);
-    postToSheet({ action: "updateCustomers", customers: updated });
   }
 
   const filteredCustomers = useMemo(() => {
@@ -539,7 +534,7 @@ export default function ServiceTracker() {
                         <td>
                           <div style={{ display: "flex", gap: 6 }}>
                             <button className="btn btn-outline" style={{ padding: "4px 10px", fontSize: 11 }} onClick={() => { setCustomerForm({ name: c.name, location: c.location || "", machines: c.machines || "" }); setEditCustomerId(c.id); setShowCustomerForm(true); }}>Edit</button>
-                            <button className="btn btn-danger" onClick={() => deleteCustomer(c.id)}>✕</button>
+                          
                           </div>
                         </td>
                       </tr>
