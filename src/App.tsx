@@ -319,12 +319,12 @@ export default function App() {
         const cat = CATEGORIES[p.categoryKey];
         errors.push(`${p.productName}: Need ${p.qty} ${cat?.unit} but only ${available} ${cat?.unit} available in ${logWarehouse}`);
       }
-      // Validate machine codes are mandatory
+      // Validate machine codes — mandatory and must be exactly 9 chars
       if (needsMachineCode(p.categoryKey, p.productName) && Number(p.qty) > 0) {
         const codes = p.machineCodes || [];
-       const invalid = Array.from({length: parseInt(p.qty)||0}, (_,ci) => codes[ci]).filter(c => !c || c.trim().length !== 9).length;
+        const invalid = Array.from({length: parseInt(p.qty)||0}, (_,ci) => codes[ci]).filter(c => !c || c.trim().length !== 9).length;
         if (invalid > 0) {
-          errors.push(`${p.productName}: All machine codes must be exactly 9 characters — ${invalid} invalid`);
+          errors.push(`${p.productName}: All machine codes must be exactly 9 characters — ${invalid} invalid/missing`);
         }
       }
     });
@@ -877,22 +877,24 @@ export default function App() {
                     </div>
                     {needsMachineCode(p.categoryKey, p.productName) && Number(p.qty)>0 && (
                       <div style={{ marginTop:10, background:"#0a0800", border:"1px solid #3a2e10", borderRadius:8, padding:"10px 12px" }}>
-                        <div style={{ fontSize:10, color:"#c9a84c", fontWeight:700, marginBottom:6, textTransform:"uppercase" }}>🔧 Machine Codes ({p.productName})</div>
-                        {Array.from({length:parseInt(p.qty)||0},(_,ci)=>(
-                          <div key={ci} style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4 }}>
-                            <span style={{ fontSize:10, color:"#7a6a30", minWidth:60 }}>Unit {ci+1}:</span>
-                            <input className="machine-code-input" 
-  value={(p.machineCodes||[])[ci]||""} 
-  onChange={e=>updateMachineCode(i,ci,e.target.value)} 
-  placeholder={`Machine code ${ci+1} (9 digits)`}
-  maxLength={9}
-  style={{ 
-    borderColor: ((p.machineCodes||[])[ci]||"").length === 9 ? "#4ade80" : ((p.machineCodes||[])[ci]||"").length > 0 ? "#facc15" : "#3a2e10",
-    color: ((p.machineCodes||[])[ci]||"").length === 9 ? "#4ade80" : "#f0e6c0"
-  }} 
-/>
-                          </div>
-                        ))}
+                        <div style={{ fontSize:10, color:"#c9a84c", fontWeight:700, marginBottom:6, textTransform:"uppercase" }}>🔧 Machine Codes ({p.productName}) — 9 characters required</div>
+                        {Array.from({length:parseInt(p.qty)||0},(_,ci)=>{
+                          const codeVal = (p.machineCodes||[])[ci]||"";
+                          const isValid = codeVal.trim().length === 9;
+                          const isPartial = codeVal.trim().length > 0 && codeVal.trim().length < 9;
+                          return (
+                            <div key={ci} style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4 }}>
+                              <span style={{ fontSize:10, color:"#7a6a30", minWidth:60 }}>Unit {ci+1}:</span>
+                              <div style={{ flex:1, position:"relative" }}>
+                                <input className="machine-code-input" value={codeVal} onChange={e=>updateMachineCode(i,ci,e.target.value)} placeholder={`Machine code ${ci+1} (9 chars)`} maxLength={9}
+                                  style={{ borderColor: isValid?"#4ade80":isPartial?"#facc15":"#ef444488", color: isValid?"#4ade80":"#f0e6c0", paddingRight:30 }} />
+                                <span style={{ position:"absolute", right:8, top:"50%", transform:"translateY(-50%)", fontSize:10, fontWeight:700, color: isValid?"#4ade80":isPartial?"#facc15":"#ef4444" }}>
+                                  {isValid ? "✓" : `${codeVal.length}/9`}
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
                   </div>
