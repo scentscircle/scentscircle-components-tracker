@@ -67,12 +67,12 @@ function ReportTab({ logs, customers }) {
     return logs.filter(l => String(l.date).split("T")[0].startsWith(reportMonth));
   }, [logs, reportMonth]);
   const summary = useMemo(() => {
-    const map = {};
-    filtered.forEach(l => {
+    const map: Record<string, {visits:number, products:Record<string,number>}> = {};
+    filtered.forEach((l:any) => {
       if (!map[l.customer]) map[l.customer] = { visits:0, products:{} };
       map[l.customer].visits++;
       try {
-        JSON.parse(l.products||"[]").forEach(p => {
+        JSON.parse(l.products||"[]").forEach((p:any) => {
           const key = `${p.categoryKey}: ${p.productName}`;
           map[l.customer].products[key] = (map[l.customer].products[key]||0) + Number(p.qty);
         });
@@ -105,18 +105,21 @@ function ReportTab({ logs, customers }) {
           </thead>
           <tbody>
             {summary.length===0 && <tr><td colSpan={4} style={{ textAlign:"center", padding:40, color:"#5a4a20", fontSize:13 }}>No data found.</td></tr>}
-            {summary.map(([customer,d],i) => (
+            {summary.map(([customer,d],i) => {
+              const dd = d as {visits:number, products:Record<string,number>};
+              return (
               <tr key={customer} style={{ borderBottom:"1px solid #2a2000" }}>
                 <td style={{ padding:"11px 14px", color:"#5a4a20", fontSize:11 }}>{i+1}</td>
                 <td style={{ padding:"11px 14px", fontWeight:600, color:"#f5e6b0", fontSize:13 }}>{customer}</td>
-                <td style={{ padding:"11px 14px", color:"#c9a84c", fontSize:13 }}>{d.visits}</td>
+                <td style={{ padding:"11px 14px", color:"#c9a84c", fontSize:13 }}>{dd.visits}</td>
                 <td style={{ padding:"11px 14px", fontSize:11, color:"#7a6a30" }}>
-                  {Object.entries(d.products).map(([k,v])=>(
+                  {Object.entries(dd.products).map(([k,v])=>(
                     <span key={k} style={{ display:"inline-block", marginRight:8, marginBottom:2, background:"#1a1500", border:"1px solid #3a2e10", borderRadius:4, padding:"1px 6px" }}>{k}: {v}</span>
                   ))}
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -244,11 +247,11 @@ export default function App() {
   }, [logs, filterMonth]);
 
   const monthStats = useMemo(() => {
-    const stats = { services:monthLogs.length, customers:new Set(monthLogs.map(l=>l.customer)).size };
-    const productTotals = {};
-    monthLogs.forEach(l => {
+    const stats = { services:monthLogs.length, customers:new Set(monthLogs.map((l:any)=>l.customer)).size };
+    const productTotals: Record<string,number> = {};
+    monthLogs.forEach((l:any) => {
       try {
-        JSON.parse(l.products||"[]").forEach(p => {
+        JSON.parse(l.products||"[]").forEach((p:any) => {
           productTotals[p.categoryKey] = (productTotals[p.categoryKey]||0) + Number(p.qty);
         });
       } catch {}
@@ -578,16 +581,17 @@ export default function App() {
                           <td style={{ fontWeight:600, color:"#f5e6b0" }}>{l.customer}</td>
                           <td style={{ fontSize:11 }}>
                             {Object.entries(grouped).map(([catKey,prods]) => {
-                              const cat = CATEGORIES[catKey];
+                              const cat = (CATEGORIES as any)[catKey];
+                              const prodList = prods as any[];
                               return (
                                 <div key={catKey} style={{ marginBottom:3 }}>
                                   <span style={{ fontWeight:700, color:"#c9a84c" }}>{cat?.icon} {cat?.label}: </span>
-                                  {prods.map((p,pi) => (
+                                  {prodList.map((p:any,pi:number) => (
                                     <span key={pi}>
                                       <span style={{ color:"#f0e6c0", marginRight:6 }}>{p.productName} × {p.qty} {cat?.unit}</span>
-                                      {p.machineCodes && p.machineCodes.length > 0 && p.machineCodes.some(c=>c) && (
+                                      {p.machineCodes && p.machineCodes.length > 0 && p.machineCodes.some((c:any)=>c) && (
                                         <span style={{ color:"#7ec8e3", fontSize:10 }}>
-                                          [Codes: {p.machineCodes.filter(c=>c).join(", ")}]
+                                          [Codes: {p.machineCodes.filter((c:any)=>c).join(", ")}]
                                         </span>
                                       )}
                                     </span>
@@ -757,7 +761,7 @@ export default function App() {
                         <td><span className="wh-badge">{h.type==="transfer"?(h.from&&h.to?`${h.from}→${h.to}`:"Transfer"):(h.warehouse||"—")}</span></td>
                         <td style={{ color:"#c9a84c" }}>{h.category||"Transfer"}</td>
                         <td style={{ fontWeight:600, color:"#f5e6b0" }}>{h.item}</td>
-                        <td style={{ color:"#7a6a30" }}>{h.type==="transfer" ? "⇄ Transfer" : (h.vendor||"—")}</td>
+                        <td style={{ color:"#7a6a30" }}>{h.vendor||h.type==="transfer"?"⇄ Transfer":"—"}</td>
                         <td style={{ textAlign:"center" }}>{h.stockInHand??h.qty}</td>
                         <td style={{ color:"#4ade80", fontWeight:700, textAlign:"center" }}>{h.type==="transfer"?`⇄${h.qty}`:`+${h.received}`}</td>
                         <td style={{ color:"#f5d060", fontWeight:700, textAlign:"center" }}>{h.closing??h.qty}</td>
