@@ -761,7 +761,7 @@ export default function App() {
                         <td><span className="wh-badge">{h.type==="transfer"?(h.from&&h.to?`${h.from}→${h.to}`:"Transfer"):(h.warehouse||"—")}</span></td>
                         <td style={{ color:"#c9a84c" }}>{h.category||"Transfer"}</td>
                         <td style={{ fontWeight:600, color:"#f5e6b0" }}>{h.item}</td>
-                        <td style={{ color:"#7a6a30" }}>{h.vendor||h.type==="transfer"?"⇄ Transfer":"—"}</td>
+                        <td style={{ color:"#7a6a30" }}>{h.type==="transfer" ? "⇄ Transfer" : (h.vendor||"—")}</td>
                         <td style={{ textAlign:"center" }}>{h.stockInHand??h.qty}</td>
                         <td style={{ color:"#4ade80", fontWeight:700, textAlign:"center" }}>{h.type==="transfer"?`⇄${h.qty}`:`+${h.received}`}</td>
                         <td style={{ color:"#f5d060", fontWeight:700, textAlign:"center" }}>{h.closing??h.qty}</td>
