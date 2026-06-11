@@ -356,7 +356,7 @@ export default function App() {
     const addQty = Number(stockForm.qty);
     const closingQty = prevQty + addQty;
     updatedStock[stockForm.warehouse][stockForm.categoryKey][stockForm.productName] = closingQty;
-    const historyEntry = { id:Date.now(), date:stockForm.dateReceived, warehouse:stockForm.warehouse, category:cat?.label||stockForm.categoryKey, item:stockForm.productName, vendor:stockForm.vendor, stockInHand:prevQty, received:addQty, closing:closingQty, unit:cat?.unit||"Pcs" };
+    const historyEntry = { id:Date.now(), date:stockForm.dateReceived, warehouse:stockForm.warehouse, category:cat?.label||stockForm.categoryKey, item:stockForm.productName, vendor:stockForm.vendor, stockInHand:prevQty, received:addQty, closing:closingQty, unit:cat?.unit||"Pcs", type:"purchase" };
     setStock(updatedStock);
     setStockHistory(h => [historyEntry, ...h]);
     postToSheet({ action:"updateStock", stock:updatedStock, historyEntry });
