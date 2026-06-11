@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 
-const SHEET_URL = "https://script.google.com/macros/s/AKfycbyWYeJpD9gghjeQNZQueiK-XjO7aVOeZ6KfNTkgkO1S8dHt-lvYM3BsKQq1I7W3X7tzVg/exec";
+const SHEET_URL = "https://script.google.com/macros/s/AKfycbzukF4ucK4YLYTCrcVBcKkMjcimeK0e6MjSci5tt9uaHIeuS1wFSerg0KO-1qvtKp2XYg/exec";
 
 // ── STOCK STRUCTURE ──
 const CATEGORIES = {
