@@ -9,7 +9,7 @@ const WAREHOUSES = ["Ajman Warehouse", "Al Quoz Warehouse", "Head Office"];
 
 const CATEGORIES = {
   BATTERY: { label:"Battery", icon:"🔋", unit:"Pcs", lowThreshold:20, products:["AA","AAA","C","D"] },
-  AEROSOL_REFILL: { label:"Aerosol Refill", icon:"🌸", unit:"Pcs", lowThreshold:20, products:["6th Sense","Harmony","Lavende","Odorxpert"] },
+  AEROSOL_REFILL: { label:"Aerosol Refill", icon:"🌸", unit:"Pcs", lowThreshold:20, products:["6th Sense","Harmony","Lavende","Odorxpert - Green Forest"] },
   AEROSOL_DISPENSER: { label:"Aerosol Dispenser", icon:"📦", unit:"Pcs", lowThreshold:20, products:["LED White Big","LED Black Small","LCD White","LCD Black"] },
   URINAL: { label:"Urinals", icon:"🚽", unit:"Pcs", lowThreshold:20, products:["Urinal Dispenser","Urinal Pouch"] },
   OIL_COMPONENTS: { label:"Oil Components", icon:"🧪", unit:"Ltrs", lowThreshold:50, products:["DPG","Alcohol"] },
@@ -30,7 +30,7 @@ function needsMachineCode(categoryKey, productName) {
 
 const SERVICE_PRODUCT_TYPES = [
   { key:"BATTERY", label:"🔋 Battery", products:["AA","AAA","C","D"], unit:"Pcs" },
-  { key:"AEROSOL_REFILL", label:"🌸 Aerosol Refill", products:["6th Sense","Harmony","Lavende","Odorxpert"], unit:"Pcs" },
+  { key:"AEROSOL_REFILL", label:"🌸 Aerosol Refill", products:["6th Sense","Harmony","Lavende","Odorxpert - Green Forest"], unit:"Pcs" },
   { key:"AEROSOL_DISPENSER", label:"📦 Aerosol Dispenser", products:["LED White Big","LED Black Small","LCD White","LCD Black"], unit:"Pcs" },
   { key:"URINAL", label:"🚽 Urinal", products:["Urinal Dispenser","Urinal Pouch"], unit:"Pcs" },
   { key:"OIL_COMPONENTS", label:"🧪 Oil Components", products:["DPG","Alcohol"], unit:"Ltrs" },
@@ -160,9 +160,9 @@ export default function App() {
   const [showStockForm, setShowStockForm] = useState(false);
   const [stockForm, setStockForm] = useState({ categoryKey:"BATTERY", productName:"AA", qty:"", dateReceived:today(), vendor:"", warehouse:"Al Quoz Warehouse" });
 
-  // Pure Oil form
-  const [showPureOilForm, setShowPureOilForm] = useState(false);
-  const [newPureOil, setNewPureOil] = useState("");
+  // Add Product form (generic, for any category — including Pure Oil)
+  const [showAddProductForm, setShowAddProductForm] = useState(false);
+  const [newProductForm, setNewProductForm] = useState({ categoryKey:"BATTERY", productName:"" });
 
   // Transfer form
   const [showTransferForm, setShowTransferForm] = useState(false);
@@ -259,14 +259,14 @@ export default function App() {
   const allLowStockItems = useMemo(() => {
     const items = [];
     Object.entries(CATEGORIES).forEach(([catKey, cat]) => {
-      const products = catKey==="PURE_OIL" ? pureOilProducts : cat.products;
+      const products = catKey==="PURE_OIL" ? pureOilProducts : [...cat.products, ...(dynamicExtraProducts[catKey]||[])];
       products.forEach(p => {
         const qty = getStockQty(catKey, p, stockFilterWarehouse);
         if (qty < cat.lowThreshold) items.push({ category:cat.label, name:p, qty, unit:cat.unit });
       });
     });
     return items;
-  }, [stock, pureOilProducts, stockFilterWarehouse]);
+  }, [stock, pureOilProducts, stockFilterWarehouse, dynamicExtraProducts]);
 
   const topLowStock = allLowStockItems.slice(0, 10);
   const totalLowStockPages = Math.ceil(allLowStockItems.length / LOW_STOCK_PAGE_SIZE);
@@ -313,9 +313,9 @@ export default function App() {
   const filteredHistory = useMemo(() => {
     let list = stockHistory;
     if (purchaseFilterWarehouse) list = list.filter(h => h.warehouse === purchaseFilterWarehouse);
-   return [...list].sort((a,b) => {
-      const dateA = new Date(String(a.date).split("T")[0]).getTime();
-      const dateB = new Date(String(b.date).split("T")[0]).getTime();
+    return [...list].sort((a,b) => {
+      const dateA = new Date(String(a.date).split("T")[0]);
+      const dateB = new Date(String(b.date).split("T")[0]);
       if (dateB - dateA !== 0) return dateB - dateA;
       return Number(b.id) - Number(a.id);
     });
@@ -329,8 +329,7 @@ export default function App() {
       if (idx!==i) return p;
       const updated = { ...p, [field]:val };
       if (field==="categoryKey") {
-        const cat = SERVICE_PRODUCT_TYPES.find(c=>c.key===val);
-        const prods = val==="PURE_OIL" ? pureOilProducts : (cat?.products||[]);
+        const prods = getAllProducts(val);
         updated.productName = prods[0]||"";
         updated.machineCodes = [];
       }
@@ -356,6 +355,69 @@ export default function App() {
   function getProductsForCategory(categoryKey) {
     if (categoryKey==="PURE_OIL") return pureOilProducts;
     return SERVICE_PRODUCT_TYPES.find(c=>c.key===categoryKey)?.products||[];
+  }
+
+  // Dynamic products: discover any product names present in stock rows
+  // that aren't already in the static lists, per category.
+  const dynamicExtraProducts = useMemo(() => {
+    const extras = {};
+    Object.values(stock).forEach(catMap => {
+      Object.entries(catMap || {}).forEach(([catKey, prodMap]) => {
+        const staticList = catKey==="PURE_OIL" ? pureOilProducts : getProductsForCategory(catKey);
+        Object.keys(prodMap || {}).forEach(prodName => {
+          if (!staticList.includes(prodName)) {
+            if (!extras[catKey]) extras[catKey] = [];
+            if (!extras[catKey].includes(prodName)) extras[catKey].push(prodName);
+          }
+        });
+      });
+    });
+    return extras;
+  }, [stock, pureOilProducts]);
+
+  // Full product list for a category = static + dynamically added
+  function getAllProducts(categoryKey) {
+    if (categoryKey==="PURE_OIL") return pureOilProducts;
+    const staticList = getProductsForCategory(categoryKey);
+    const extra = dynamicExtraProducts[categoryKey] || [];
+    return [...staticList, ...extra];
+  }
+
+  // Add a brand new product to a category — creates a stock row (qty 0) in every warehouse
+  async function addNewProduct() {
+    const categoryKey = newProductForm.categoryKey;
+    const productName = newProductForm.productName.trim();
+    if (!productName) return;
+    if (categoryKey === "PURE_OIL") {
+      if (pureOilProducts.includes(productName)) { alert("This pure oil already exists."); return; }
+      setPureOilProducts(p => [...p, productName]);
+      try { await supabase.from("pure_oils").insert({ name: productName }); } catch {}
+    } else {
+      const existing = getAllProducts(categoryKey);
+      if (existing.includes(productName)) { alert("This product already exists in this category."); return; }
+    }
+    setSyncStatus("saving"); setSaving(true);
+    try {
+      const rows = WAREHOUSES.map(wh => ({
+        warehouse: wh, category_key: categoryKey, product_name: productName, qty: 0,
+      }));
+      const { error } = await supabase.from("stock").upsert(rows, { onConflict: "warehouse,category_key,product_name" });
+      if (error) throw error;
+      // Update local stock state so it shows immediately
+      setStock(prev => {
+        const updated = JSON.parse(JSON.stringify(prev));
+        WAREHOUSES.forEach(wh => {
+          if (!updated[wh]) updated[wh] = {};
+          if (!updated[wh][categoryKey]) updated[wh][categoryKey] = {};
+          if (updated[wh][categoryKey][productName] === undefined) updated[wh][categoryKey][productName] = 0;
+        });
+        return updated;
+      });
+      setSyncStatus("synced");
+    } catch { setSyncStatus("error"); }
+    setSaving(false);
+    setNewProductForm({ categoryKey:"BATTERY", productName:"" });
+    setShowAddProductForm(false);
   }
 
   // Submit log
@@ -483,24 +545,6 @@ export default function App() {
     setTransferForm({ fromWarehouse:"Al Quoz Warehouse", toWarehouse:"Ajman Warehouse", categoryKey:"BATTERY", productName:"AA", qty:"", date:today() });
   }
 
-  // Pure oil
-  function addPureOil() {
-    if (!newPureOil.trim()) return;
-    const name = newPureOil.trim();
-    const updated = [...pureOilProducts, name];
-    setPureOilProducts(updated);
-    setSyncStatus("saving"); setSaving(true);
-    (async () => {
-      try {
-        const { error } = await supabase.from("pure_oils").insert({ name }).select();
-        if (error) throw error;
-        setSyncStatus("synced");
-      } catch { setSyncStatus("error"); }
-      setSaving(false);
-    })();
-    setNewPureOil(""); setShowPureOilForm(false);
-  }
-
   // Customer
   function saveCustomer() {
     if (!customerForm.name.trim()) return;
@@ -613,7 +657,7 @@ export default function App() {
             {tab===TABS.CUSTOMERS && <button className="btn btn-gold" onClick={() => { setCustomerForm({...emptyCustomer}); setEditCustomerId(null); setShowCustomerForm(true); }}>+ Add Customer</button>}
             {tab===TABS.PURCHASE && <button className="btn btn-gold" onClick={() => setShowStockForm(true)}>+ Add Stock</button>}
             {tab===TABS.TRANSFER && <button className="btn btn-transfer" onClick={() => setShowTransferForm(true)}>⇄ New Transfer</button>}
-            {tab===TABS.STOCK && <button className="btn btn-outline" onClick={() => setShowPureOilForm(true)} style={{ fontSize:12 }}>+ Pure Oil</button>}
+            {tab===TABS.STOCK && <button className="btn btn-gold" onClick={() => { setNewProductForm({ categoryKey:"BATTERY", productName:"" }); setShowAddProductForm(true); }} style={{ fontSize:12 }}>+ Add Product</button>}
           </div>
           <div style={{ display:"flex", gap:8, alignItems:"center" }}>
             <span style={{ fontSize:11, color:syncColor, fontWeight:600 }}>{syncLabel}</span>
@@ -797,13 +841,13 @@ export default function App() {
               </div>
               <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))", gap:18, marginBottom:24 }}>
                 {Object.entries(CATEGORIES).map(([catKey,cat]) => {
-                  const products = catKey==="PURE_OIL" ? pureOilProducts : cat.products;
+                  const products = catKey==="PURE_OIL" ? pureOilProducts : [...cat.products, ...(dynamicExtraProducts[catKey]||[])];
                   return (
                     <div key={catKey}>
                       <div style={{ fontSize:12, fontWeight:700, color:"#f5d060", marginBottom:6, textTransform:"uppercase", letterSpacing:1 }}>{cat.icon} {cat.label}</div>
                       <div className="stock-box">
                         <div className="stock-box-inner">
-                          {products.length===0 && <div style={{ color:"#5a4a20", fontSize:12 }}>No items. {catKey==="PURE_OIL"&&"Click '+ Pure Oil' to add."}</div>}
+                          {products.length===0 && <div style={{ color:"#5a4a20", fontSize:12 }}>No items. {catKey==="PURE_OIL"&&"Click '+ Add Product' to add."}</div>}
                           {products.map(p => {
                             const qty = getStockQty(catKey, p, stockFilterWarehouse);
                             const low = qty < cat.lowThreshold;
@@ -901,7 +945,7 @@ export default function App() {
               <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:14, marginBottom:20 }}>
                 {WAREHOUSES.map(wh => {
                   const totalItems = Object.entries(CATEGORIES).reduce((acc,[catKey,cat]) => {
-                    const products = catKey==="PURE_OIL" ? pureOilProducts : cat.products;
+                    const products = catKey==="PURE_OIL" ? pureOilProducts : [...cat.products, ...(dynamicExtraProducts[catKey]||[])];
                     return acc + products.reduce((s,p) => s + (Number(stock[wh]?.[catKey]?.[p])||0), 0);
                   }, 0);
                   return (
@@ -983,9 +1027,9 @@ export default function App() {
                       </div>
                       <div>
                         <label>Product</label>
-                        {getProductsForCategory(p.categoryKey).length>0 ? (
+                        {getAllProducts(p.categoryKey).length>0 ? (
                           <select value={p.productName} onChange={e=>updateLogProduct(i,"productName",e.target.value)}>
-                            {getProductsForCategory(p.categoryKey).map(pr=><option key={pr} value={pr}>{pr}</option>)}
+                            {getAllProducts(p.categoryKey).map(pr=><option key={pr} value={pr}>{pr}</option>)}
                           </select>
                         ) : (
                           <input value={p.productName} onChange={e=>updateLogProduct(i,"productName",e.target.value)} placeholder="Enter product name" />
@@ -1042,8 +1086,8 @@ export default function App() {
             <div style={{ fontWeight:700, fontSize:17, marginBottom:18, color:"#f5d060" }}>📦 Add Stock Purchase</div>
             <div style={{ display:"grid", gap:12 }}>
               <div><label>Warehouse</label><select value={stockForm.warehouse} onChange={e=>setStockForm(f=>({...f,warehouse:e.target.value}))}>{WAREHOUSES.map(w=><option key={w} value={w}>{w}</option>)}</select></div>
-              <div><label>Category</label><select value={stockForm.categoryKey} onChange={e=>{ const cat=CATEGORIES[e.target.value]; const prods=e.target.value==="PURE_OIL"?pureOilProducts:(cat?.products||[]); setStockForm(f=>({...f,categoryKey:e.target.value,productName:prods[0]||""})); }}>{Object.entries(CATEGORIES).map(([k,c])=><option key={k} value={k}>{c.icon} {c.label}</option>)}</select></div>
-              <div><label>Product</label>{(()=>{ const prods=stockForm.categoryKey==="PURE_OIL"?pureOilProducts:(CATEGORIES[stockForm.categoryKey]?.products||[]); return prods.length>0?<select value={stockForm.productName} onChange={e=>setStockForm(f=>({...f,productName:e.target.value}))}>{prods.map(p=><option key={p} value={p}>{p}</option>)}</select>:<input value={stockForm.productName} onChange={e=>setStockForm(f=>({...f,productName:e.target.value}))} placeholder="Enter product name" />; })()}</div>
+              <div><label>Category</label><select value={stockForm.categoryKey} onChange={e=>{ const prods=getAllProducts(e.target.value); setStockForm(f=>({...f,categoryKey:e.target.value,productName:prods[0]||""})); }}>{Object.entries(CATEGORIES).map(([k,c])=><option key={k} value={k}>{c.icon} {c.label}</option>)}</select></div>
+              <div><label>Product</label>{(()=>{ const prods=getAllProducts(stockForm.categoryKey); return prods.length>0?<select value={stockForm.productName} onChange={e=>setStockForm(f=>({...f,productName:e.target.value}))}>{prods.map(p=><option key={p} value={p}>{p}</option>)}</select>:<input value={stockForm.productName} onChange={e=>setStockForm(f=>({...f,productName:e.target.value}))} placeholder="Enter product name" />; })()}</div>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
                 <div><label>Quantity ({CATEGORIES[stockForm.categoryKey]?.unit})</label><input type="number" min="0" step="0.01" value={stockForm.qty} onChange={e=>setStockForm(f=>({...f,qty:e.target.value}))} placeholder="0" /></div>
                 <div><label>Date Received</label><input type="date" value={stockForm.dateReceived} onChange={e=>setStockForm(f=>({...f,dateReceived:e.target.value}))} /></div>
@@ -1072,8 +1116,8 @@ export default function App() {
                 <div><label>From Warehouse</label><select value={transferForm.fromWarehouse} onChange={e=>setTransferForm(f=>({...f,fromWarehouse:e.target.value}))}>{WAREHOUSES.map(w=><option key={w} value={w}>{w}</option>)}</select></div>
                 <div><label>To Warehouse</label><select value={transferForm.toWarehouse} onChange={e=>setTransferForm(f=>({...f,toWarehouse:e.target.value}))}>{WAREHOUSES.map(w=><option key={w} value={w}>{w}</option>)}</select></div>
               </div>
-              <div><label>Category</label><select value={transferForm.categoryKey} onChange={e=>{ const cat=CATEGORIES[e.target.value]; const prods=e.target.value==="PURE_OIL"?pureOilProducts:(cat?.products||[]); setTransferForm(f=>({...f,categoryKey:e.target.value,productName:prods[0]||""})); }}>{Object.entries(CATEGORIES).map(([k,c])=><option key={k} value={k}>{c.icon} {c.label}</option>)}</select></div>
-              <div><label>Product</label>{(()=>{ const prods=transferForm.categoryKey==="PURE_OIL"?pureOilProducts:(CATEGORIES[transferForm.categoryKey]?.products||[]); return prods.length>0?<select value={transferForm.productName} onChange={e=>setTransferForm(f=>({...f,productName:e.target.value}))}>{prods.map(p=><option key={p} value={p}>{p}</option>)}</select>:<input value={transferForm.productName} onChange={e=>setTransferForm(f=>({...f,productName:e.target.value}))} placeholder="Enter product name" />; })()}</div>
+              <div><label>Category</label><select value={transferForm.categoryKey} onChange={e=>{ const prods=getAllProducts(e.target.value); setTransferForm(f=>({...f,categoryKey:e.target.value,productName:prods[0]||""})); }}>{Object.entries(CATEGORIES).map(([k,c])=><option key={k} value={k}>{c.icon} {c.label}</option>)}</select></div>
+              <div><label>Product</label>{(()=>{ const prods=getAllProducts(transferForm.categoryKey); return prods.length>0?<select value={transferForm.productName} onChange={e=>setTransferForm(f=>({...f,productName:e.target.value}))}>{prods.map(p=><option key={p} value={p}>{p}</option>)}</select>:<input value={transferForm.productName} onChange={e=>setTransferForm(f=>({...f,productName:e.target.value}))} placeholder="Enter product name" />; })()}</div>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
                 <div><label>Quantity</label><input type="number" min="0" step="0.01" value={transferForm.qty} onChange={e=>setTransferForm(f=>({...f,qty:e.target.value}))} placeholder="0" /></div>
                 <div><label>Transfer Date</label><input type="date" value={transferForm.date} onChange={e=>setTransferForm(f=>({...f,date:e.target.value}))} /></div>
@@ -1091,15 +1135,29 @@ export default function App() {
       )}
 
       {/* PURE OIL MODAL */}
-      {showPureOilForm && (
-        <div onClick={()=>setShowPureOilForm(false)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:100, backdropFilter:"blur(4px)" }}>
-          <div className="card slide-in" onClick={e=>e.stopPropagation()} style={{ width:"100%", maxWidth:400, margin:16, padding:24, background:"#0a0800", border:"1px solid #c9a84c" }}>
-            <div style={{ fontWeight:700, fontSize:17, marginBottom:18, color:"#f5d060" }}>💧 Add Pure Oil Product</div>
-            <div><label>Pure Oil Name</label><input value={newPureOil} onChange={e=>setNewPureOil(e.target.value)} placeholder="e.g. Harmony, Gold..." onKeyDown={e=>e.key==="Enter"&&addPureOil()} /></div>
-            <div style={{ fontSize:11, color:"#7a6a30", marginTop:6 }}>Total: {pureOilProducts.length} oils</div>
+      {/* ADD NEW PRODUCT MODAL */}
+      {showAddProductForm && (
+        <div onClick={()=>setShowAddProductForm(false)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:100, backdropFilter:"blur(4px)" }}>
+          <div className="card slide-in" onClick={e=>e.stopPropagation()} style={{ width:"100%", maxWidth:420, margin:16, padding:24, background:"#0a0800", border:"1px solid #c9a84c" }}>
+            <div style={{ fontWeight:700, fontSize:17, marginBottom:18, color:"#f5d060" }}>📦 Add New Product</div>
+            <div style={{ display:"grid", gap:12 }}>
+              <div>
+                <label>Category</label>
+                <select value={newProductForm.categoryKey} onChange={e=>setNewProductForm(f=>({...f,categoryKey:e.target.value}))}>
+                  {Object.entries(CATEGORIES).map(([k,c])=><option key={k} value={k}>{c.icon} {c.label}</option>)}
+                </select>
+              </div>
+              <div>
+                <label>Product Name</label>
+                <input value={newProductForm.productName} onChange={e=>setNewProductForm(f=>({...f,productName:e.target.value}))} placeholder="e.g. AAA Premium, New Scent..." onKeyDown={e=>e.key==="Enter"&&addNewProduct()} />
+              </div>
+              <div style={{ fontSize:11, color:"#7a6a30" }}>
+                This will add the product to <strong>{CATEGORIES[newProductForm.categoryKey]?.label}</strong> with 0 stock across all {WAREHOUSES.length} warehouses. It will then appear in Service Log, Purchase, Transfer and Stock screens.
+              </div>
+            </div>
             <div style={{ display:"flex", gap:10, marginTop:18, justifyContent:"flex-end" }}>
-              <button className="btn btn-outline" onClick={()=>setShowPureOilForm(false)}>Cancel</button>
-              <button className="btn btn-gold" onClick={addPureOil}>Add Pure Oil</button>
+              <button className="btn btn-outline" onClick={()=>setShowAddProductForm(false)}>Cancel</button>
+              <button className="btn btn-gold" onClick={addNewProduct} disabled={saving}>{saving?"Saving...":"Add Product"}</button>
             </div>
           </div>
         </div>
