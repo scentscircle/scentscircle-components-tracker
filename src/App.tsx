@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
+import { createClient } from "@supabase/supabase-js";
 
-const SHEET_URL = "https://script.google.com/macros/s/AKfycbzukF4ucK4YLYTCrcVBcKkMjcimeK0e6MjSci5tt9uaHIeuS1wFSerg0KO-1qvtKp2XYg/exec";
+const SUPABASE_URL = "https://xcwfzuvyigqwrxmtswrd.supabase.co";
+const SUPABASE_KEY = "sb_publishable_Jbc5OenfTO8AGUj_nyiA7g_dxJ5BACE";
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const WAREHOUSES = ["Ajman Warehouse", "Al Quoz Warehouse", "Head Office"];
 
@@ -183,30 +186,67 @@ export default function App() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(SHEET_URL + "?nocache=" + Date.now());
-      const json = await res.json();
-      if (json.success) {
-        setLogs(json.logs || []);
-        setStock(json.stock || {});
-        setCustomers(json.customers || []);
-        setStockHistory(json.stockHistory || []);
-        setPureOilProducts(json.pureOilProducts || []);
-        setLastRefresh(new Date());
-        setSyncStatus("synced");
-      }
+      const [logsRes, stockRes, customersRes, historyRes, oilsRes] = await Promise.all([
+        supabase.from("logs").select("*").order("created_at", { ascending: false }),
+        supabase.from("stock").select("*"),
+        supabase.from("customers").select("*"),
+        supabase.from("stock_history").select("*").order("created_at", { ascending: false }),
+        supabase.from("pure_oils").select("*").order("name", { ascending: true }),
+      ]);
+
+      if (logsRes.error) throw logsRes.error;
+      if (stockRes.error) throw stockRes.error;
+      if (customersRes.error) throw customersRes.error;
+      if (historyRes.error) throw historyRes.error;
+      if (oilsRes.error) throw oilsRes.error;
+
+      const logsData = (logsRes.data || []).map(l => ({
+        id: l.id, date: l.date, customer: l.customer, warehouse: l.warehouse || "",
+        products: typeof l.products === "string" ? l.products : JSON.stringify(l.products || []),
+        notes: l.notes || "",
+      }));
+
+      // Build nested stock object from rows
+      const stockObj = {};
+      (stockRes.data || []).forEach(r => {
+        if (!stockObj[r.warehouse]) stockObj[r.warehouse] = {};
+        if (!stockObj[r.warehouse][r.category_key]) stockObj[r.warehouse][r.category_key] = {};
+        stockObj[r.warehouse][r.category_key][r.product_name] = Number(r.qty) || 0;
+      });
+
+      const customersData = (customersRes.data || []).map(c => ({
+        id: c.id, name: c.name, location: c.location || "", machines: c.machines || "",
+      }));
+
+      const historyData = (historyRes.data || []).map(h => ({
+        id: h.id, date: h.date, warehouse: h.warehouse || "", category: h.category || "",
+        item: h.item || "", vendor: h.vendor || "", stockInHand: Number(h.stock_in_hand) || 0,
+        received: Number(h.received) || 0, closing: Number(h.closing) || 0, unit: h.unit || "",
+        type: h.type || "purchase", from: h.from || "", to: h.to || "", qty: Number(h.qty) || 0,
+      }));
+
+      const oilsData = (oilsRes.data || []).map(o => o.name);
+
+      setLogs(logsData);
+      setStock(stockObj);
+      setCustomers(customersData);
+      setStockHistory(historyData);
+      setPureOilProducts(oilsData);
+      setLastRefresh(new Date());
+      setSyncStatus("synced");
     } catch { setSyncStatus("error"); }
     setLoading(false);
   }, []);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  async function postToSheet(payload) {
-    setSyncStatus("saving"); setSaving(true);
-    try {
-      await fetch(SHEET_URL, { method:"POST", mode:"no-cors", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload) });
-      setSyncStatus("synced");
-    } catch { setSyncStatus("error"); }
-    setSaving(false);
+  // Upsert a set of stock rows (warehouse/categoryKey/productName/qty)
+  async function upsertStockRows(rows) {
+    const payload = rows.map(r => ({
+      warehouse: r.warehouse, category_key: r.categoryKey, product_name: r.productName, qty: r.qty,
+    }));
+    const { error } = await supabase.from("stock").upsert(payload, { onConflict: "warehouse,category_key,product_name" });
+    if (error) throw error;
   }
 
   // Stock helpers — warehouse-aware
@@ -335,13 +375,28 @@ export default function App() {
     const entry = { id:Date.now(), date:serviceDate, customer:selectedCustomer, warehouse:logWarehouse, products:JSON.stringify(logProducts), notes:logNotes };
     const updatedStock = JSON.parse(JSON.stringify(stock));
     if (!updatedStock[logWarehouse]) updatedStock[logWarehouse] = {};
+    const changedRows = [];
     logProducts.forEach(p => {
       if (!updatedStock[logWarehouse][p.categoryKey]) updatedStock[logWarehouse][p.categoryKey] = {};
-      updatedStock[logWarehouse][p.categoryKey][p.productName] = Math.max(0, (Number(updatedStock[logWarehouse][p.categoryKey][p.productName])||0) - Number(p.qty||0));
+      const newQty = Math.max(0, (Number(updatedStock[logWarehouse][p.categoryKey][p.productName])||0) - Number(p.qty||0));
+      updatedStock[logWarehouse][p.categoryKey][p.productName] = newQty;
+      changedRows.push({ warehouse:logWarehouse, categoryKey:p.categoryKey, productName:p.productName, qty:newQty });
     });
     setStock(updatedStock);
     setLogs(l => [entry, ...l]);
-    postToSheet({ action:"addLog", entry, stock:updatedStock });
+    setSyncStatus("saving"); setSaving(true);
+    (async () => {
+      try {
+        const { error: logErr } = await supabase.from("logs").insert({
+          id: entry.id, date: entry.date, customer: entry.customer, warehouse: entry.warehouse,
+          products: JSON.parse(entry.products), notes: entry.notes || null,
+        });
+        if (logErr) throw logErr;
+        await upsertStockRows(changedRows);
+        setSyncStatus("synced");
+      } catch { setSyncStatus("error"); }
+      setSaving(false);
+    })();
     setSelectedCustomer(""); setLogProducts([{...emptyProduct}]); setLogNotes(""); setShowLogForm(false);
   }
 
@@ -359,7 +414,21 @@ export default function App() {
     const historyEntry = { id:Date.now(), date:stockForm.dateReceived, warehouse:stockForm.warehouse, category:cat?.label||stockForm.categoryKey, item:stockForm.productName, vendor:stockForm.vendor, stockInHand:prevQty, received:addQty, closing:closingQty, unit:cat?.unit||"Pcs", type:"purchase" };
     setStock(updatedStock);
     setStockHistory(h => [historyEntry, ...h]);
-    postToSheet({ action:"updateStock", stock:updatedStock, historyEntry });
+    setSyncStatus("saving"); setSaving(true);
+    (async () => {
+      try {
+        await upsertStockRows([{ warehouse:stockForm.warehouse, categoryKey:stockForm.categoryKey, productName:stockForm.productName, qty:closingQty }]);
+        const { error } = await supabase.from("stock_history").insert({
+          id: historyEntry.id, date: historyEntry.date, warehouse: historyEntry.warehouse,
+          category: historyEntry.category, item: historyEntry.item, vendor: historyEntry.vendor || null,
+          stock_in_hand: historyEntry.stockInHand, received: historyEntry.received, closing: historyEntry.closing,
+          unit: historyEntry.unit, type: historyEntry.type,
+        });
+        if (error) throw error;
+        setSyncStatus("synced");
+      } catch { setSyncStatus("error"); }
+      setSaving(false);
+    })();
     setStockForm({ categoryKey:"BATTERY", productName:"AA", qty:"", dateReceived:today(), vendor:"", warehouse:"Al Quoz Warehouse" });
     setShowStockForm(false);
   }
@@ -380,12 +449,30 @@ export default function App() {
     if (!updatedStock[from][catKey]) updatedStock[from][catKey] = {};
     if (!updatedStock[to]) updatedStock[to] = {};
     if (!updatedStock[to][catKey]) updatedStock[to][catKey] = {};
-    updatedStock[from][catKey][prod] = available - qty;
-    updatedStock[to][catKey][prod] = (Number(updatedStock[to][catKey][prod])||0) + qty;
+    const newFromQty = available - qty;
+    const newToQty = (Number(updatedStock[to][catKey][prod])||0) + qty;
+    updatedStock[from][catKey][prod] = newFromQty;
+    updatedStock[to][catKey][prod] = newToQty;
     const transferEntry = { id:Date.now(), date:transferForm.date, type:"transfer", from, to, category:CATEGORIES[catKey]?.label||catKey, item:prod, qty, unit:CATEGORIES[catKey]?.unit||"Pcs" };
     setStock(updatedStock);
     setStockHistory(h => [transferEntry, ...h]);
-    postToSheet({ action:"transferStock", stock:updatedStock, transferEntry });
+    setSyncStatus("saving"); setSaving(true);
+    (async () => {
+      try {
+        await upsertStockRows([
+          { warehouse:from, categoryKey:catKey, productName:prod, qty:newFromQty },
+          { warehouse:to, categoryKey:catKey, productName:prod, qty:newToQty },
+        ]);
+        const { error } = await supabase.from("stock_history").insert({
+          id: transferEntry.id, date: transferEntry.date, type: "transfer",
+          from: transferEntry.from, to: transferEntry.to, category: transferEntry.category,
+          item: transferEntry.item, qty: transferEntry.qty, unit: transferEntry.unit,
+        });
+        if (error) throw error;
+        setSyncStatus("synced");
+      } catch { setSyncStatus("error"); }
+      setSaving(false);
+    })();
     setShowTransferForm(false);
     setTransferForm({ fromWarehouse:"Al Quoz Warehouse", toWarehouse:"Ajman Warehouse", categoryKey:"BATTERY", productName:"AA", qty:"", date:today() });
   }
@@ -393,24 +480,52 @@ export default function App() {
   // Pure oil
   function addPureOil() {
     if (!newPureOil.trim()) return;
-    const updated = [...pureOilProducts, newPureOil.trim()];
+    const name = newPureOil.trim();
+    const updated = [...pureOilProducts, name];
     setPureOilProducts(updated);
-    postToSheet({ action:"addPureOil", oilName:newPureOil.trim() });
+    setSyncStatus("saving"); setSaving(true);
+    (async () => {
+      try {
+        const { error } = await supabase.from("pure_oils").insert({ name }).select();
+        if (error) throw error;
+        setSyncStatus("synced");
+      } catch { setSyncStatus("error"); }
+      setSaving(false);
+    })();
     setNewPureOil(""); setShowPureOilForm(false);
   }
 
   // Customer
   function saveCustomer() {
     if (!customerForm.name.trim()) return;
+    setSyncStatus("saving"); setSaving(true);
     if (editCustomerId!==null) {
       const updatedCustomer = { ...customerForm, id:editCustomerId };
       setCustomers(cs => cs.map(c => c.id===editCustomerId ? updatedCustomer : c));
-      postToSheet({ action:"updateCustomer", customer:updatedCustomer });
+      (async () => {
+        try {
+          const { error } = await supabase.from("customers").update({
+            name: updatedCustomer.name, location: updatedCustomer.location || null, machines: updatedCustomer.machines || null,
+          }).eq("id", editCustomerId);
+          if (error) throw error;
+          setSyncStatus("synced");
+        } catch { setSyncStatus("error"); }
+        setSaving(false);
+      })();
       setEditCustomerId(null);
     } else {
       const newCustomer = { ...customerForm, id:Date.now() };
       setCustomers(cs => [...cs, newCustomer]);
-      postToSheet({ action:"addCustomer", customer:newCustomer });
+      (async () => {
+        try {
+          const { error } = await supabase.from("customers").insert({
+            id: newCustomer.id, name: newCustomer.name, location: newCustomer.location || null, machines: newCustomer.machines || null,
+          });
+          if (error) throw error;
+          setSyncStatus("synced");
+        } catch { setSyncStatus("error"); }
+        setSaving(false);
+      })();
     }
     setCustomerForm({ ...emptyCustomer }); setShowCustomerForm(false);
   }
@@ -531,7 +646,7 @@ export default function App() {
         {loading && (
           <div style={{ textAlign:"center", padding:60, color:"#c9a84c" }}>
             <div className="spin" style={{ fontSize:32, marginBottom:12 }}>⟳</div>
-            <div style={{ fontSize:14, fontWeight:500 }}>Loading from Google Sheets...</div>
+            <div style={{ fontSize:14, fontWeight:500 }}>Loading data...</div>
           </div>
         )}
 
@@ -761,7 +876,7 @@ export default function App() {
                         <td><span className="wh-badge">{h.type==="transfer"?(h.from&&h.to?`${h.from}→${h.to}`:"Transfer"):(h.warehouse||"—")}</span></td>
                         <td style={{ color:"#c9a84c" }}>{h.category||"Transfer"}</td>
                         <td style={{ fontWeight:600, color:"#f5e6b0" }}>{h.item}</td>
-                        <td style={{ color:"#7a6a30" }}>{h.type==="transfer" ? "⇄ Transfer" : (h.vendor||"—")}</td>
+                        <td style={{ color:"#7a6a30" }}>{h.vendor||h.type==="transfer"?"⇄ Transfer":"—"}</td>
                         <td style={{ textAlign:"center" }}>{h.stockInHand??h.qty}</td>
                         <td style={{ color:"#4ade80", fontWeight:700, textAlign:"center" }}>{h.type==="transfer"?`⇄${h.qty}`:`+${h.received}`}</td>
                         <td style={{ color:"#f5d060", fontWeight:700, textAlign:"center" }}>{h.closing??h.qty}</td>
