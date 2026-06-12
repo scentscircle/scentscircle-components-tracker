@@ -255,6 +255,29 @@ export default function App() {
     return Number(stock[wh]?.[categoryKey]?.[productName]) || 0;
   }
 
+  function getProductsForCategory(categoryKey) {
+    if (categoryKey==="PURE_OIL") return pureOilProducts;
+    return SERVICE_PRODUCT_TYPES.find(c=>c.key===categoryKey)?.products||[];
+  }
+
+  // Dynamic products: discover any product names present in stock rows
+  // that aren't already in the static lists, per category.
+  const dynamicExtraProducts = useMemo(() => {
+    const extras = {};
+    Object.values(stock).forEach(catMap => {
+      Object.entries(catMap || {}).forEach(([catKey, prodMap]) => {
+        const staticList = catKey==="PURE_OIL" ? pureOilProducts : getProductsForCategory(catKey);
+        Object.keys(prodMap || {}).forEach(prodName => {
+          if (!staticList.includes(prodName)) {
+            if (!extras[catKey]) extras[catKey] = [];
+            if (!extras[catKey].includes(prodName)) extras[catKey].push(prodName);
+          }
+        });
+      });
+    });
+    return extras;
+  }, [stock, pureOilProducts]);
+
   // All low stock for selected warehouse
   const allLowStockItems = useMemo(() => {
     const items = [];
@@ -314,8 +337,8 @@ export default function App() {
     let list = stockHistory;
     if (purchaseFilterWarehouse) list = list.filter(h => h.warehouse === purchaseFilterWarehouse);
     return [...list].sort((a,b) => {
-      const dateA = new Date(String(a.date).split("T")[0]);
-      const dateB = new Date(String(b.date).split("T")[0]);
+      const dateA = new Date(String(a.date).split("T")[0]).getTime();
+      const dateB = new Date(String(b.date).split("T")[0]).getTime();
       if (dateB - dateA !== 0) return dateB - dateA;
       return Number(b.id) - Number(a.id);
     });
@@ -352,29 +375,6 @@ export default function App() {
       return { ...p, machineCodes:codes };
     }));
   }
-  function getProductsForCategory(categoryKey) {
-    if (categoryKey==="PURE_OIL") return pureOilProducts;
-    return SERVICE_PRODUCT_TYPES.find(c=>c.key===categoryKey)?.products||[];
-  }
-
-  // Dynamic products: discover any product names present in stock rows
-  // that aren't already in the static lists, per category.
-  const dynamicExtraProducts = useMemo(() => {
-    const extras = {};
-    Object.values(stock).forEach(catMap => {
-      Object.entries(catMap || {}).forEach(([catKey, prodMap]) => {
-        const staticList = catKey==="PURE_OIL" ? pureOilProducts : getProductsForCategory(catKey);
-        Object.keys(prodMap || {}).forEach(prodName => {
-          if (!staticList.includes(prodName)) {
-            if (!extras[catKey]) extras[catKey] = [];
-            if (!extras[catKey].includes(prodName)) extras[catKey].push(prodName);
-          }
-        });
-      });
-    });
-    return extras;
-  }, [stock, pureOilProducts]);
-
   // Full product list for a category = static + dynamically added
   function getAllProducts(categoryKey) {
     if (categoryKey==="PURE_OIL") return pureOilProducts;
