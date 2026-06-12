@@ -61,76 +61,347 @@ function formatDate(d) {
   return `${day} ${["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][parseInt(month)-1]} ${year}`;
 }
 
+// Export an array of row objects to a CSV file and trigger download
+function exportToCSV(filename, headers, rows) {
+  const escapeCell = (val) => {
+    const s = val===null||val===undefined ? "" : String(val);
+    if (s.includes(",") || s.includes('"') || s.includes("\n")) {
+      return '"' + s.replace(/"/g,'""') + '"';
+    }
+    return s;
+  };
+  const csvLines = [headers.map(escapeCell).join(",")];
+  rows.forEach(row => csvLines.push(row.map(escapeCell).join(",")));
+  const csvContent = csvLines.join("\r\n");
+  const blob = new Blob(["\ufeff"+csvContent], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
 const emptyProduct = { categoryKey:"BATTERY", productName:"AA", qty:"", machineCodes:[] };
 const emptyCustomer = { name:"", location:"", machines:"" };
 
-function ReportTab({ logs, customers }) {
+// Helpers for Opening/Closing Stock Report
+function ymKey(dateStr) {
+  return String(dateStr).split("T")[0].slice(0,7); // "YYYY-MM"
+}
+function dKey(dateStr) {
+  return String(dateStr).split("T")[0]; // "YYYY-MM-DD"
+}
+function isAfterMonth(dateStr, monthKey) {
+  return ymKey(dateStr) > monthKey;
+}
+function isInMonth(dateStr, monthKey) {
+  return ymKey(dateStr) === monthKey;
+}
+
+// Compute Opening & Closing stock for a category's products, for a given month + warehouse scope.
+// baselineDate: movements strictly BEFORE this date are ignored entirely (treated as already
+// baked into the stock figure as of that date) — used so the manually-entered Pure Oil
+// stock taken on a specific date becomes the "opening" for that month, without being
+// distorted by earlier (pre-baseline) history rows.
+function computeOpeningClosing({ stock, stockHistory, logs, categoryKey, categoryLabel, products, warehouse, monthKey, baselineDate }) {
+  const warehousesToCheck = warehouse === "ALL" ? WAREHOUSES : [warehouse];
+  const baselineMonth = baselineDate ? ymKey(baselineDate) : null;
+
+  return products.map(productName => {
+    // Current stock (sum across relevant warehouses)
+    let currentStock = 0;
+    warehousesToCheck.forEach(wh => {
+      currentStock += Number(stock[wh]?.[categoryKey]?.[productName]) || 0;
+    });
+
+    // Movements AFTER this month (to roll back from current -> closing of this month)
+    let afterIn = 0, afterOut = 0;
+    // Movements DURING this month (to roll back from closing -> opening)
+    let duringPurchasesReturns = 0, duringTransferIn = 0, duringTransferOut = 0, duringConsumed = 0;
+
+    const isBeforeBaseline = (dateStr) => baselineDate && dKey(dateStr) < baselineDate;
+
+    stockHistory.forEach(h => {
+      if (h.category !== categoryLabel || h.item !== productName) return;
+      if (isBeforeBaseline(h.date)) return; // ignore pre-baseline history entirely
+      const inScope = warehousesToCheck.includes(h.warehouse) || (h.type==="transfer" && (warehousesToCheck.includes(h.from)||warehousesToCheck.includes(h.to)));
+      if (!inScope) return;
+
+      if (h.type === "transfer") {
+        const fromIn = warehousesToCheck.includes(h.from);
+        const toIn = warehousesToCheck.includes(h.to);
+        // Net effect on the scoped warehouse-set: if both from & to are within scope, net = 0
+        let net = 0;
+        if (toIn) net += Number(h.qty)||0;
+        if (fromIn) net -= Number(h.qty)||0;
+        if (isAfterMonth(h.date, monthKey)) {
+          if (net > 0) afterIn += net; else afterOut += -net;
+        } else if (isInMonth(h.date, monthKey)) {
+          if (net > 0) duringTransferIn += net; else duringTransferOut += -net;
+        }
+      } else {
+        // purchase / return: increases stock (received)
+        const amt = Number(h.received)||0;
+        if (isAfterMonth(h.date, monthKey)) {
+          afterIn += amt;
+        } else if (isInMonth(h.date, monthKey)) {
+          duringPurchasesReturns += amt;
+        }
+      }
+    });
+
+    // Consumption from logs (decreases stock)
+    logs.forEach(l => {
+      if (!warehousesToCheck.includes(l.warehouse)) return;
+      if (isBeforeBaseline(l.date)) return; // ignore pre-baseline consumption entirely
+      let prods = [];
+      try { prods = JSON.parse(l.products||"[]"); } catch {}
+      prods.forEach(p => {
+        if (p.categoryKey !== categoryKey || p.productName !== productName) return;
+        const amt = Number(p.qty)||0;
+        if (isAfterMonth(l.date, monthKey)) {
+          afterOut += amt;
+        } else if (isInMonth(l.date, monthKey)) {
+          duringConsumed += amt;
+        }
+      });
+    });
+
+    // Closing(month) = current - (net change after month)
+    const closing = currentStock - afterIn + afterOut;
+    // Opening(month) = closing - (net change during month)
+    // For the baseline month itself, "during" only reflects movements from baselineDate onward
+    // (movements before baselineDate were excluded above), so opening naturally lands on the
+    // stock figure as of baselineDate.
+    const netDuringIn = duringPurchasesReturns + duringTransferIn;
+    const netDuringOut = duringTransferOut + duringConsumed;
+    const opening = closing - netDuringIn + netDuringOut;
+
+    return {
+      productName,
+      opening: Math.round(opening*100)/100,
+      purchasesReturns: Math.round(duringPurchasesReturns*100)/100,
+      transferIn: Math.round(duringTransferIn*100)/100,
+      transferOut: Math.round(duringTransferOut*100)/100,
+      consumed: Math.round(duringConsumed*100)/100,
+      closing: Math.round(closing*100)/100,
+    };
+  });
+}
+
+function ReportTab({ logs, customers, stock, stockHistory, pureOilProducts }) {
   const now = new Date();
+  const [reportSubTab, setReportSubTab] = useState("stockreport"); // stockreport | pureoilconsumption | otherconsumption
   const [reportMonth, setReportMonth] = useState(`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`);
+  const [stockReportMonth, setStockReportMonth] = useState(`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`);
+  const [stockReportWarehouse, setStockReportWarehouse] = useState("ALL");
+
   const filtered = useMemo(() => {
     if (!reportMonth) return logs;
     return logs.filter(l => String(l.date).split("T")[0].startsWith(reportMonth));
   }, [logs, reportMonth]);
-  const summary = useMemo(() => {
-    const map: Record<string, {visits:number, products:Record<string,number>}> = {};
-    filtered.forEach((l:any) => {
-      if (!map[l.customer]) map[l.customer] = { visits:0, products:{} };
-      map[l.customer].visits++;
-      try {
-        JSON.parse(l.products||"[]").forEach((p:any) => {
-          const key = `${p.categoryKey}: ${p.productName}`;
-          map[l.customer].products[key] = (map[l.customer].products[key]||0) + Number(p.qty);
+
+  // Generic: consumption by customer for a given set of category keys, for the selected month
+  function buildConsumptionByCustomer(categoryKeys) {
+    const rows = [];
+    filtered.forEach(l => {
+      let prods = [];
+      try { prods = JSON.parse(l.products||"[]"); } catch {}
+      prods.forEach(p => {
+        if (!categoryKeys.includes(p.categoryKey)) return;
+        rows.push({
+          customer: l.customer,
+          category: CATEGORIES[p.categoryKey]?.label || p.categoryKey,
+          product: p.productName,
+          qty: Number(p.qty)||0,
+          unit: CATEGORIES[p.categoryKey]?.unit || "",
+          date: l.date,
+          warehouse: l.warehouse,
         });
-      } catch {}
+      });
     });
-    return Object.entries(map).sort((a,b) => b[1].visits-a[1].visits);
-  }, [filtered]);
+    // Aggregate by customer + category + product
+    const map = {};
+    rows.forEach(r => {
+      const key = `${r.customer}|${r.category}|${r.product}`;
+      if (!map[key]) map[key] = { customer:r.customer, category:r.category, product:r.product, qty:0, unit:r.unit };
+      map[key].qty += r.qty;
+    });
+    return Object.values(map).sort((a:any,b:any) => a.customer.localeCompare(b.customer) || a.category.localeCompare(b.category) || a.product.localeCompare(b.product));
+  }
+
+  const pureOilConsumption = useMemo(() => {
+    if (reportSubTab !== "pureoilconsumption") return [];
+    return buildConsumptionByCustomer(["PURE_OIL"]);
+  }, [reportSubTab, filtered]);
+
+  const otherConsumption = useMemo(() => {
+    if (reportSubTab !== "otherconsumption") return [];
+    return buildConsumptionByCustomer(["AEROSOL_REFILL","BATTERY","URINAL"]);
+  }, [reportSubTab, filtered]);
+
+
+  const PURE_OIL_BASELINE_DATE = "2026-06-12";
+
+  // Pure Oil Opening/Closing report data
+  const pureOilReport = useMemo(() => {
+    if (reportSubTab !== "stockreport") return [];
+    return computeOpeningClosing({
+      stock, stockHistory, logs,
+      categoryKey: "PURE_OIL", categoryLabel: CATEGORIES.PURE_OIL.label,
+      products: pureOilProducts,
+      warehouse: stockReportWarehouse,
+      monthKey: stockReportMonth,
+      baselineDate: PURE_OIL_BASELINE_DATE,
+    }).filter(r => r.opening!==0 || r.closing!==0 || r.purchasesReturns!==0 || r.transferIn!==0 || r.transferOut!==0 || r.consumed!==0);
+  }, [reportSubTab, stock, stockHistory, logs, pureOilProducts, stockReportWarehouse, stockReportMonth]);
+
   return (
     <>
-      <div style={{ display:"flex", gap:14, marginBottom:20, alignItems:"flex-end", flexWrap:"wrap" }}>
-        <div><label>Select Month</label><input type="month" value={reportMonth} onChange={e=>setReportMonth(e.target.value)} style={{ width:200 }} /></div>
-        {reportMonth && <button onClick={()=>setReportMonth("")} style={{ cursor:"pointer", background:"transparent", border:"1px solid #c9a84c55", borderRadius:8, color:"#c9a84c", padding:"8px 14px", fontSize:13, fontFamily:"Poppins,sans-serif", fontWeight:600, alignSelf:"flex-end" }}>Show All</button>}
-        <div style={{ marginLeft:"auto", alignSelf:"flex-end", fontSize:13, color:"#7a6a30" }}>{filtered.length} records</div>
-      </div>
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))", gap:14, marginBottom:20 }}>
-        {[{label:"Total Services",value:filtered.length,color:"#f5d060"},{label:"Customers Served",value:summary.length,color:"#c9a84c"}].map(s=>(
-          <div key={s.label} style={{ background:"#0f0e00", border:"1px solid #3a2e10", borderRadius:14, padding:"16px 18px" }}>
-            <div style={{ fontSize:11, color:"#c9a84c", fontWeight:600, letterSpacing:"0.5px", textTransform:"uppercase", marginBottom:8 }}>{s.label}</div>
-            <div style={{ fontSize:26, fontWeight:700, color:s.color }}>{s.value}</div>
-          </div>
+      <div style={{ display:"flex", gap:8, marginBottom:20, borderBottom:"1px solid #2a2000" }}>
+        {[
+          {key:"stockreport",label:"🧪 Pure Oil Opening/Closing"},
+          {key:"pureoilconsumption",label:"💧 Pure Oil — Customer Usage"},
+          {key:"otherconsumption",label:"🔋 Aerosol/Battery/Urinal — Customer Usage"},
+        ].map(t=>(
+          <div key={t.key} onClick={()=>setReportSubTab(t.key)} style={{ cursor:"pointer", padding:"10px 18px", fontSize:13, fontWeight:600, color:reportSubTab===t.key?"#f5d060":"#7a6a30", borderBottom:reportSubTab===t.key?"2px solid #f5d060":"2px solid transparent" }}>{t.label}</div>
         ))}
       </div>
-      <div style={{ fontSize:14, fontWeight:700, color:"#f5d060", marginBottom:12, textTransform:"uppercase", letterSpacing:1 }}>
-        {reportMonth ? `Report: ${new Date(reportMonth+"-01").toLocaleString("en",{month:"long",year:"numeric"})}` : "All Time Report"}
+
+      {reportSubTab==="stockreport" && (
+      <>
+      <div style={{ display:"flex", gap:14, marginBottom:20, alignItems:"flex-end", flexWrap:"wrap" }}>
+        <div><label>Select Month</label><input type="month" value={stockReportMonth} onChange={e=>setStockReportMonth(e.target.value)} style={{ width:200 }} /></div>
+        <div><label>Warehouse</label>
+          <select value={stockReportWarehouse} onChange={e=>setStockReportWarehouse(e.target.value)} style={{ width:200 }}>
+            <option value="ALL">All Warehouses</option>
+            {WAREHOUSES.map(w=><option key={w} value={w}>{w}</option>)}
+          </select>
+        </div>
+        <div style={{ marginLeft:"auto", alignSelf:"flex-end", fontSize:13, color:"#7a6a30" }}>{pureOilReport.length} products with movement</div>
+      </div>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:6, flexWrap:"wrap", gap:8 }}>
+        <div style={{ fontSize:14, fontWeight:700, color:"#f5d060", textTransform:"uppercase", letterSpacing:1 }}>
+          🧪 Pure Oil — Opening &amp; Closing Stock — {new Date(stockReportMonth+"-01").toLocaleString("en",{month:"long",year:"numeric"})} — {stockReportWarehouse==="ALL"?"All Warehouses":stockReportWarehouse}
+        </div>
+        <button className="btn btn-outline" disabled={pureOilReport.length===0} onClick={()=>exportToCSV(
+          `pure_oil_opening_closing_${stockReportMonth}_${stockReportWarehouse.replace(/\s+/g,"_")}.csv`,
+          ["Product","Opening (Ltrs)","Purchases/Returns (Ltrs)","Transfer In (Ltrs)","Transfer Out (Ltrs)","Consumed (Ltrs)","Closing (Ltrs)"],
+          pureOilReport.map((r:any)=>[r.productName,r.opening,r.purchasesReturns,r.transferIn,r.transferOut,r.consumed,r.closing])
+        )}>⬇ Download CSV</button>
+      </div>
+      <div style={{ fontSize:11, color:"#7a6a30", marginBottom:14 }}>
+        Opening + Purchases/Returns + Transfer In − Transfer Out − Consumed = Closing. Figures in Litres.
+        {stockReportMonth==="2026-06" && <><br/>📌 Opening stock for June 2026 reflects the stock count taken on 12 Jun 2026 (the day the full Pure Oil list was entered).</>}
       </div>
       <div style={{ background:"#0f0e00", border:"1px solid #3a2e10", borderRadius:14, overflow:"auto" }}>
         <table style={{ width:"100%", borderCollapse:"collapse" }}>
           <thead style={{ background:"#0a0800", borderBottom:"1px solid #3a2e10" }}>
-            <tr>{["#","Customer","Visits","Products Given"].map(h=><th key={h} style={{ color:"#c9a84c", fontSize:11, fontWeight:600, letterSpacing:"0.5px", textTransform:"uppercase", padding:"10px 14px", textAlign:"left" }}>{h}</th>)}</tr>
+            <tr>{["#","Product","Opening","Purchases/Returns","Transfer In","Transfer Out","Consumed","Closing"].map(h=><th key={h} style={{ color:"#c9a84c", fontSize:11, fontWeight:600, letterSpacing:"0.5px", textTransform:"uppercase", padding:"10px 14px", textAlign:"left", whiteSpace:"nowrap" }}>{h}</th>)}</tr>
           </thead>
           <tbody>
-            {summary.length===0 && <tr><td colSpan={4} style={{ textAlign:"center", padding:40, color:"#5a4a20", fontSize:13 }}>No data found.</td></tr>}
-            {summary.map(([customer,d],i) => {
-              const dd = d as {visits:number, products:Record<string,number>};
-              return (
-              <tr key={customer} style={{ borderBottom:"1px solid #2a2000" }}>
+            {pureOilReport.length===0 && <tr><td colSpan={8} style={{ textAlign:"center", padding:40, color:"#5a4a20", fontSize:13 }}>No stock movement for Pure Oil in this period.</td></tr>}
+            {pureOilReport.map((r,i) => (
+              <tr key={r.productName} style={{ borderBottom:"1px solid #2a2000" }}>
                 <td style={{ padding:"11px 14px", color:"#5a4a20", fontSize:11 }}>{i+1}</td>
-                <td style={{ padding:"11px 14px", fontWeight:600, color:"#f5e6b0", fontSize:13 }}>{customer}</td>
-                <td style={{ padding:"11px 14px", color:"#c9a84c", fontSize:13 }}>{dd.visits}</td>
-                <td style={{ padding:"11px 14px", fontSize:11, color:"#7a6a30" }}>
-                  {Object.entries(dd.products).map(([k,v])=>(
-                    <span key={k} style={{ display:"inline-block", marginRight:8, marginBottom:2, background:"#1a1500", border:"1px solid #3a2e10", borderRadius:4, padding:"1px 6px" }}>{k}: {v}</span>
-                  ))}
-                </td>
+                <td style={{ padding:"11px 14px", fontWeight:600, color:"#f5e6b0", fontSize:13 }}>{r.productName}</td>
+                <td style={{ padding:"11px 14px", color:"#c9a84c", fontSize:13 }}>{r.opening} Ltrs</td>
+                <td style={{ padding:"11px 14px", color:"#4ade80", fontSize:13 }}>{r.purchasesReturns>0?`+${r.purchasesReturns}`:r.purchasesReturns} Ltrs</td>
+                <td style={{ padding:"11px 14px", color:"#4ade80", fontSize:13 }}>{r.transferIn>0?`+${r.transferIn}`:r.transferIn} Ltrs</td>
+                <td style={{ padding:"11px 14px", color:"#f97316", fontSize:13 }}>{r.transferOut>0?`-${r.transferOut}`:r.transferOut} Ltrs</td>
+                <td style={{ padding:"11px 14px", color:"#ef4444", fontSize:13 }}>{r.consumed>0?`-${r.consumed}`:r.consumed} Ltrs</td>
+                <td style={{ padding:"11px 14px", color:"#f5d060", fontWeight:700, fontSize:13 }}>{r.closing} Ltrs</td>
               </tr>
-              );
-            })}
+            ))}
           </tbody>
         </table>
       </div>
+      </>
+      )}
+
+      {reportSubTab==="pureoilconsumption" && (
+      <>
+      <div style={{ display:"flex", gap:14, marginBottom:20, alignItems:"flex-end", flexWrap:"wrap" }}>
+        <div><label>Select Month</label><input type="month" value={reportMonth} onChange={e=>setReportMonth(e.target.value)} style={{ width:200 }} /></div>
+        {reportMonth && <button onClick={()=>setReportMonth("")} style={{ cursor:"pointer", background:"transparent", border:"1px solid #c9a84c55", borderRadius:8, color:"#c9a84c", padding:"8px 14px", fontSize:13, fontFamily:"Poppins,sans-serif", fontWeight:600, alignSelf:"flex-end" }}>Show All</button>}
+        <div style={{ marginLeft:"auto", alignSelf:"flex-end", fontSize:13, color:"#7a6a30" }}>{pureOilConsumption.length} entries</div>
+      </div>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12, flexWrap:"wrap", gap:8 }}>
+        <div style={{ fontSize:14, fontWeight:700, color:"#f5d060", textTransform:"uppercase", letterSpacing:1 }}>
+          💧 Pure Oil Consumption — {reportMonth ? new Date(reportMonth+"-01").toLocaleString("en",{month:"long",year:"numeric"}) : "All Time"}
+        </div>
+        <button className="btn btn-outline" disabled={pureOilConsumption.length===0} onClick={()=>exportToCSV(
+          `pure_oil_consumption_${reportMonth||"all_time"}.csv`,
+          ["Customer","Pure Oil Product","Qty Used (Ltrs)"],
+          pureOilConsumption.map((r:any)=>[r.customer,r.product,r.qty])
+        )}>⬇ Download CSV</button>
+      </div>
+      <div style={{ background:"#0f0e00", border:"1px solid #3a2e10", borderRadius:14, overflow:"auto" }}>
+        <table style={{ width:"100%", borderCollapse:"collapse" }}>
+          <thead style={{ background:"#0a0800", borderBottom:"1px solid #3a2e10" }}>
+            <tr>{["#","Customer","Pure Oil Product","Qty Used"].map(h=><th key={h} style={{ color:"#c9a84c", fontSize:11, fontWeight:600, letterSpacing:"0.5px", textTransform:"uppercase", padding:"10px 14px", textAlign:"left" }}>{h}</th>)}</tr>
+          </thead>
+          <tbody>
+            {pureOilConsumption.length===0 && <tr><td colSpan={4} style={{ textAlign:"center", padding:40, color:"#5a4a20", fontSize:13 }}>No Pure Oil usage found for this period.</td></tr>}
+            {pureOilConsumption.map((r:any,i:number) => (
+              <tr key={i} style={{ borderBottom:"1px solid #2a2000" }}>
+                <td style={{ padding:"11px 14px", color:"#5a4a20", fontSize:11 }}>{i+1}</td>
+                <td style={{ padding:"11px 14px", fontWeight:600, color:"#f5e6b0", fontSize:13 }}>{r.customer}</td>
+                <td style={{ padding:"11px 14px", color:"#c9a84c", fontSize:13 }}>{r.product}</td>
+                <td style={{ padding:"11px 14px", color:"#f5d060", fontWeight:700, fontSize:13 }}>{r.qty} {r.unit}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      </>
+      )}
+
+      {reportSubTab==="otherconsumption" && (
+      <>
+      <div style={{ display:"flex", gap:14, marginBottom:20, alignItems:"flex-end", flexWrap:"wrap" }}>
+        <div><label>Select Month</label><input type="month" value={reportMonth} onChange={e=>setReportMonth(e.target.value)} style={{ width:200 }} /></div>
+        {reportMonth && <button onClick={()=>setReportMonth("")} style={{ cursor:"pointer", background:"transparent", border:"1px solid #c9a84c55", borderRadius:8, color:"#c9a84c", padding:"8px 14px", fontSize:13, fontFamily:"Poppins,sans-serif", fontWeight:600, alignSelf:"flex-end" }}>Show All</button>}
+        <div style={{ marginLeft:"auto", alignSelf:"flex-end", fontSize:13, color:"#7a6a30" }}>{otherConsumption.length} entries</div>
+      </div>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12, flexWrap:"wrap", gap:8 }}>
+        <div style={{ fontSize:14, fontWeight:700, color:"#f5d060", textTransform:"uppercase", letterSpacing:1 }}>
+          🔋 Aerosol Refill / Battery / Urinal — Consumption by Customer — {reportMonth ? new Date(reportMonth+"-01").toLocaleString("en",{month:"long",year:"numeric"}) : "All Time"}
+        </div>
+        <button className="btn btn-outline" disabled={otherConsumption.length===0} onClick={()=>exportToCSV(
+          `aerosol_battery_urinal_consumption_${reportMonth||"all_time"}.csv`,
+          ["Customer","Category","Product","Qty Used"],
+          otherConsumption.map((r:any)=>[r.customer,r.category,r.product,`${r.qty} ${r.unit}`])
+        )}>⬇ Download CSV</button>
+      </div>
+      <div style={{ background:"#0f0e00", border:"1px solid #3a2e10", borderRadius:14, overflow:"auto" }}>
+        <table style={{ width:"100%", borderCollapse:"collapse" }}>
+          <thead style={{ background:"#0a0800", borderBottom:"1px solid #3a2e10" }}>
+            <tr>{["#","Customer","Category","Product","Qty Used"].map(h=><th key={h} style={{ color:"#c9a84c", fontSize:11, fontWeight:600, letterSpacing:"0.5px", textTransform:"uppercase", padding:"10px 14px", textAlign:"left" }}>{h}</th>)}</tr>
+          </thead>
+          <tbody>
+            {otherConsumption.length===0 && <tr><td colSpan={5} style={{ textAlign:"center", padding:40, color:"#5a4a20", fontSize:13 }}>No usage found for this period.</td></tr>}
+            {otherConsumption.map((r:any,i:number) => (
+              <tr key={i} style={{ borderBottom:"1px solid #2a2000" }}>
+                <td style={{ padding:"11px 14px", color:"#5a4a20", fontSize:11 }}>{i+1}</td>
+                <td style={{ padding:"11px 14px", fontWeight:600, color:"#f5e6b0", fontSize:13 }}>{r.customer}</td>
+                <td style={{ padding:"11px 14px" }}><span style={{ fontSize:11, background:"#1a1500", color:"#c9a84c", border:"1px solid #3a2e1055", borderRadius:4, padding:"2px 8px" }}>{r.category}</span></td>
+                <td style={{ padding:"11px 14px", color:"#c9a84c", fontSize:13 }}>{r.product}</td>
+                <td style={{ padding:"11px 14px", color:"#f5d060", fontWeight:700, fontSize:13 }}>{r.qty} {r.unit}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      </>
+      )}
     </>
   );
 }
+
 
 export default function App() {
   const [tab, setTab] = useState(TABS.LOG);
@@ -1070,7 +1341,7 @@ export default function App() {
             </>
           )}
 
-          {tab===TABS.REPORT && <ReportTab logs={logs} customers={customers} />}
+          {tab===TABS.REPORT && <ReportTab logs={logs} customers={customers} stock={stock} stockHistory={stockHistory} pureOilProducts={pureOilProducts} />}
         </>}
       </div>
 
