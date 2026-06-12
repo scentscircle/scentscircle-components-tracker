@@ -164,7 +164,7 @@ export default function App() {
 
   // Add Product form (generic, for any category — including Pure Oil)
   const [showAddProductForm, setShowAddProductForm] = useState(false);
-  const [newProductForm, setNewProductForm] = useState({ categoryKey:"BATTERY", productName:"" });
+  const [newProductForm, setNewProductForm] = useState({ categoryKey:"BATTERY", productName:"", warehouse:"ALL" });
 
   // Transfer form
   const [showTransferForm, setShowTransferForm] = useState(false);
@@ -403,7 +403,8 @@ export default function App() {
     }
     setSyncStatus("saving"); setSaving(true);
     try {
-      const rows = WAREHOUSES.map(wh => ({
+      const targetWarehouses = newProductForm.warehouse === "ALL" ? WAREHOUSES : [newProductForm.warehouse];
+      const rows = targetWarehouses.map(wh => ({
         warehouse: wh, category_key: categoryKey, product_name: productName, qty: 0,
       }));
       const { error } = await supabase.from("stock").upsert(rows, { onConflict: "warehouse,category_key,product_name" });
@@ -411,7 +412,7 @@ export default function App() {
       // Update local stock state so it shows immediately
       setStock(prev => {
         const updated = JSON.parse(JSON.stringify(prev));
-        WAREHOUSES.forEach(wh => {
+        targetWarehouses.forEach(wh => {
           if (!updated[wh]) updated[wh] = {};
           if (!updated[wh][categoryKey]) updated[wh][categoryKey] = {};
           if (updated[wh][categoryKey][productName] === undefined) updated[wh][categoryKey][productName] = 0;
@@ -421,7 +422,7 @@ export default function App() {
       setSyncStatus("synced");
     } catch { setSyncStatus("error"); }
     setSaving(false);
-    setNewProductForm({ categoryKey:"BATTERY", productName:"" });
+    setNewProductForm({ categoryKey:"BATTERY", productName:"", warehouse:"ALL" });
     setShowAddProductForm(false);
   }
 
@@ -699,7 +700,7 @@ export default function App() {
             {tab===TABS.PURCHASE && <button className="btn btn-gold" onClick={() => setShowStockForm(true)}>+ Add Stock</button>}
             {tab===TABS.TRANSFER && <button className="btn btn-transfer" onClick={() => setShowTransferForm(true)}>⇄ New Transfer</button>}
             {tab===TABS.RETURNS && <button className="btn btn-gold" onClick={() => setShowReturnForm(true)}>♻️ New Return</button>}
-            {tab===TABS.STOCK && <button className="btn btn-gold" onClick={() => { setNewProductForm({ categoryKey:"BATTERY", productName:"" }); setShowAddProductForm(true); }} style={{ fontSize:12 }}>+ Add Product</button>}
+            {tab===TABS.STOCK && <button className="btn btn-gold" onClick={() => { setNewProductForm({ categoryKey:"BATTERY", productName:"", warehouse:"ALL" }); setShowAddProductForm(true); }} style={{ fontSize:12 }}>+ Add Product</button>}
           </div>
           <div style={{ display:"flex", gap:8, alignItems:"center" }}>
             <span style={{ fontSize:11, color:syncColor, fontWeight:600 }}>{syncLabel}</span>
@@ -1264,8 +1265,17 @@ export default function App() {
                 <label>Product Name</label>
                 <input value={newProductForm.productName} onChange={e=>setNewProductForm(f=>({...f,productName:e.target.value}))} placeholder="e.g. AAA Premium, New Scent..." onKeyDown={e=>e.key==="Enter"&&addNewProduct()} />
               </div>
+              <div>
+                <label>Warehouse</label>
+                <select value={newProductForm.warehouse} onChange={e=>setNewProductForm(f=>({...f,warehouse:e.target.value}))}>
+                  <option value="ALL">All Warehouses</option>
+                  {WAREHOUSES.map(w=><option key={w} value={w}>{w}</option>)}
+                </select>
+              </div>
               <div style={{ fontSize:11, color:"#7a6a30" }}>
-                This will add the product to <strong>{CATEGORIES[newProductForm.categoryKey]?.label}</strong> with 0 stock across all {WAREHOUSES.length} warehouses. It will then appear in Service Log, Purchase, Transfer and Stock screens.
+                This will add the product to <strong>{CATEGORIES[newProductForm.categoryKey]?.label}</strong> with 0 stock in{" "}
+                {newProductForm.warehouse==="ALL" ? `all ${WAREHOUSES.length} warehouses` : <strong style={{ color:"#c9a84c" }}>{newProductForm.warehouse}</strong>} only.
+                It will then appear in Service Log, Purchase, Transfer and Stock screens for that warehouse.
               </div>
             </div>
             <div style={{ display:"flex", gap:10, marginTop:18, justifyContent:"flex-end" }}>
