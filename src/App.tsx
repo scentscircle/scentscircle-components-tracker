@@ -311,8 +311,14 @@ export default function App() {
 
   // Filtered purchase history
   const filteredHistory = useMemo(() => {
-    if (!purchaseFilterWarehouse) return stockHistory;
-    return stockHistory.filter(h => h.warehouse === purchaseFilterWarehouse);
+    let list = stockHistory;
+    if (purchaseFilterWarehouse) list = list.filter(h => h.warehouse === purchaseFilterWarehouse);
+    return [...list].sort((a,b) => {
+      const dateA = new Date(String(a.date).split("T")[0]);
+      const dateB = new Date(String(b.date).split("T")[0]);
+      if (dateB - dateA !== 0) return dateB - dateA;
+      return Number(b.id) - Number(a.id);
+    });
   }, [stockHistory, purchaseFilterWarehouse]);
 
   // Log product helpers
