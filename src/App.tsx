@@ -283,11 +283,25 @@ export default function App() {
     return extras;
   }, [stock, pureOilProducts]);
 
+  // Per-warehouse product lists for FINISHED_AROMA_OIL — only show products that
+  // actually have a stock row in that specific warehouse (no cross-warehouse "0" entries).
+  const finishedAromaOilByWarehouse = useMemo(() => {
+    const map = {};
+    WAREHOUSES.forEach(wh => {
+      map[wh] = Object.keys(stock[wh]?.FINISHED_AROMA_OIL || {});
+    });
+    return map;
+  }, [stock]);
+
+  function getFinishedAromaOilProducts(warehouse) {
+    return finishedAromaOilByWarehouse[warehouse] || [];
+  }
+
   // All low stock for selected warehouse
   const allLowStockItems = useMemo(() => {
     const items = [];
     Object.entries(CATEGORIES).forEach(([catKey, cat]) => {
-      const products = catKey==="PURE_OIL" ? pureOilProducts : [...cat.products, ...(dynamicExtraProducts[catKey]||[])];
+      const products = catKey==="PURE_OIL" ? pureOilProducts : catKey==="FINISHED_AROMA_OIL" ? getFinishedAromaOilProducts(stockFilterWarehouse) : [...cat.products, ...(dynamicExtraProducts[catKey]||[])];
       products.forEach(p => {
         const qty = getStockQty(catKey, p, stockFilterWarehouse);
         if (qty < cat.lowThreshold) items.push({ category:cat.label, name:p, qty, unit:cat.unit });
@@ -357,7 +371,7 @@ export default function App() {
       if (idx!==i) return p;
       const updated = { ...p, [field]:val };
       if (field==="categoryKey") {
-        const prods = getAllProducts(val);
+        const prods = val==="FINISHED_AROMA_OIL" ? getFinishedAromaOilProducts(logWarehouse) : getAllProducts(val);
         updated.productName = prods[0]||"";
         updated.machineCodes = [];
       }
@@ -885,7 +899,7 @@ export default function App() {
               </div>
               <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))", gap:18, marginBottom:24 }}>
                 {Object.entries(CATEGORIES).map(([catKey,cat]) => {
-                  const products = catKey==="PURE_OIL" ? pureOilProducts : [...cat.products, ...(dynamicExtraProducts[catKey]||[])];
+                  const products = catKey==="PURE_OIL" ? pureOilProducts : catKey==="FINISHED_AROMA_OIL" ? getFinishedAromaOilProducts(stockFilterWarehouse) : [...cat.products, ...(dynamicExtraProducts[catKey]||[])];
                   return (
                     <div key={catKey}>
                       <div style={{ fontSize:12, fontWeight:700, color:"#f5d060", marginBottom:6, textTransform:"uppercase", letterSpacing:1 }}>{cat.icon} {cat.label}</div>
@@ -986,21 +1000,6 @@ export default function App() {
           {tab===TABS.TRANSFER && (
             <>
               <div style={{ fontSize:13, fontWeight:700, color:"#f5d060", marginBottom:16, textTransform:"uppercase", letterSpacing:1 }}>⇄ Inter-Warehouse Transfer History</div>
-              <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:14, marginBottom:20 }}>
-                {WAREHOUSES.map(wh => {
-                  const totalItems = Object.entries(CATEGORIES).reduce((acc,[catKey,cat]) => {
-                    const products = catKey==="PURE_OIL" ? pureOilProducts : [...cat.products, ...(dynamicExtraProducts[catKey]||[])];
-                    return acc + products.reduce((s,p) => s + (Number(stock[wh]?.[catKey]?.[p])||0), 0);
-                  }, 0);
-                  return (
-                    <div key={wh} className="card" style={{ padding:"16px 18px" }}>
-                      <div style={{ fontSize:11, color:"#c9a84c", fontWeight:600, letterSpacing:"0.5px", textTransform:"uppercase", marginBottom:6 }}>🏭 {wh}</div>
-                      <div style={{ fontSize:18, fontWeight:700, color:"#f5d060" }}>{totalItems} units</div>
-                      <div style={{ fontSize:10, color:"#7a6a30", marginTop:2 }}>Total stock</div>
-                    </div>
-                  );
-                })}
-              </div>
               <div className="card" style={{ overflow:"auto" }}>
                 <table style={{ width:"100%", borderCollapse:"collapse" }}>
                   <thead style={{ background:"#0a0800", borderBottom:"1px solid #3a2e10" }}>
@@ -1101,13 +1100,13 @@ export default function App() {
                       </div>
                       <div>
                         <label>Product</label>
-                        {getAllProducts(p.categoryKey).length>0 ? (
+                        {(()=>{ const prods = p.categoryKey==="FINISHED_AROMA_OIL" ? getFinishedAromaOilProducts(logWarehouse) : getAllProducts(p.categoryKey); return prods.length>0 ? (
                           <select value={p.productName} onChange={e=>updateLogProduct(i,"productName",e.target.value)}>
-                            {getAllProducts(p.categoryKey).map(pr=><option key={pr} value={pr}>{pr}</option>)}
+                            {prods.map(pr=><option key={pr} value={pr}>{pr}</option>)}
                           </select>
                         ) : (
                           <input value={p.productName} onChange={e=>updateLogProduct(i,"productName",e.target.value)} placeholder="Enter product name" />
-                        )}
+                        ); })()}
                       </div>
                       <div>
                         <label>Qty</label>
@@ -1160,8 +1159,8 @@ export default function App() {
             <div style={{ fontWeight:700, fontSize:17, marginBottom:18, color:"#f5d060" }}>📦 Add Stock Purchase</div>
             <div style={{ display:"grid", gap:12 }}>
               <div><label>Warehouse</label><select value={stockForm.warehouse} onChange={e=>setStockForm(f=>({...f,warehouse:e.target.value}))}>{WAREHOUSES.map(w=><option key={w} value={w}>{w}</option>)}</select></div>
-              <div><label>Category</label><select value={stockForm.categoryKey} onChange={e=>{ const prods=getAllProducts(e.target.value); setStockForm(f=>({...f,categoryKey:e.target.value,productName:prods[0]||""})); }}>{Object.entries(CATEGORIES).map(([k,c])=><option key={k} value={k}>{c.icon} {c.label}</option>)}</select></div>
-              <div><label>Product</label>{(()=>{ const prods=getAllProducts(stockForm.categoryKey); return prods.length>0?<select value={stockForm.productName} onChange={e=>setStockForm(f=>({...f,productName:e.target.value}))}>{prods.map(p=><option key={p} value={p}>{p}</option>)}</select>:<input value={stockForm.productName} onChange={e=>setStockForm(f=>({...f,productName:e.target.value}))} placeholder="Enter product name" />; })()}</div>
+              <div><label>Category</label><select value={stockForm.categoryKey} onChange={e=>{ const newCat=e.target.value; const prods=newCat==="FINISHED_AROMA_OIL"?getFinishedAromaOilProducts(stockForm.warehouse):getAllProducts(newCat); setStockForm(f=>({...f,categoryKey:newCat,productName:prods[0]||""})); }}>{Object.entries(CATEGORIES).map(([k,c])=><option key={k} value={k}>{c.icon} {c.label}</option>)}</select></div>
+              <div><label>Product</label>{(()=>{ const prods=stockForm.categoryKey==="FINISHED_AROMA_OIL"?getFinishedAromaOilProducts(stockForm.warehouse):getAllProducts(stockForm.categoryKey); return prods.length>0?<select value={stockForm.productName} onChange={e=>setStockForm(f=>({...f,productName:e.target.value}))}>{prods.map(p=><option key={p} value={p}>{p}</option>)}</select>:<input value={stockForm.productName} onChange={e=>setStockForm(f=>({...f,productName:e.target.value}))} placeholder="Enter product name" />; })()}</div>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
                 <div><label>Quantity ({CATEGORIES[stockForm.categoryKey]?.unit})</label><input type="number" min="0" step="0.01" value={stockForm.qty} onChange={e=>setStockForm(f=>({...f,qty:e.target.value}))} placeholder="0" /></div>
                 <div><label>Date Received</label><input type="date" value={stockForm.dateReceived} onChange={e=>setStockForm(f=>({...f,dateReceived:e.target.value}))} /></div>
@@ -1186,10 +1185,10 @@ export default function App() {
           <div className="card slide-in" onClick={e=>e.stopPropagation()} style={{ width:"100%", maxWidth:500, margin:16, padding:24, background:"#0a0800", border:"1px solid #c9a84c" }}>
             <div style={{ fontWeight:700, fontSize:17, marginBottom:18, color:"#f5d060" }}>♻️ Return Finished Aroma Oil</div>
             <div style={{ display:"grid", gap:12 }}>
-              <div><label>Warehouse</label><select value={returnForm.warehouse} onChange={e=>setReturnForm(f=>({...f,warehouse:e.target.value}))}>{WAREHOUSES.map(w=><option key={w} value={w}>{w}</option>)}</select></div>
+              <div><label>Warehouse</label><select value={returnForm.warehouse} onChange={e=>{ const wh=e.target.value; const prods=getFinishedAromaOilProducts(wh); setReturnForm(f=>({...f,warehouse:wh,productName:prods.includes(f.productName)?f.productName:""})); }}>{WAREHOUSES.map(w=><option key={w} value={w}>{w}</option>)}</select></div>
               <div>
                 <label>Finished Aroma Oil Product</label>
-                {(()=>{ const prods=getAllProducts("FINISHED_AROMA_OIL"); return prods.length>0?(
+                {(()=>{ const prods=getFinishedAromaOilProducts(returnForm.warehouse); return prods.length>0?(
                   <select value={returnForm.productName} onChange={e=>setReturnForm(f=>({...f,productName:e.target.value}))}>
                     <option value="">Select product...</option>
                     {prods.map(p=><option key={p} value={p}>{p}</option>)}
@@ -1230,8 +1229,8 @@ export default function App() {
                 <div><label>From Warehouse</label><select value={transferForm.fromWarehouse} onChange={e=>setTransferForm(f=>({...f,fromWarehouse:e.target.value}))}>{WAREHOUSES.map(w=><option key={w} value={w}>{w}</option>)}</select></div>
                 <div><label>To Warehouse</label><select value={transferForm.toWarehouse} onChange={e=>setTransferForm(f=>({...f,toWarehouse:e.target.value}))}>{WAREHOUSES.map(w=><option key={w} value={w}>{w}</option>)}</select></div>
               </div>
-              <div><label>Category</label><select value={transferForm.categoryKey} onChange={e=>{ const prods=getAllProducts(e.target.value); setTransferForm(f=>({...f,categoryKey:e.target.value,productName:prods[0]||""})); }}>{Object.entries(CATEGORIES).map(([k,c])=><option key={k} value={k}>{c.icon} {c.label}</option>)}</select></div>
-              <div><label>Product</label>{(()=>{ const prods=getAllProducts(transferForm.categoryKey); return prods.length>0?<select value={transferForm.productName} onChange={e=>setTransferForm(f=>({...f,productName:e.target.value}))}>{prods.map(p=><option key={p} value={p}>{p}</option>)}</select>:<input value={transferForm.productName} onChange={e=>setTransferForm(f=>({...f,productName:e.target.value}))} placeholder="Enter product name" />; })()}</div>
+              <div><label>Category</label><select value={transferForm.categoryKey} onChange={e=>{ const newCat=e.target.value; const prods=newCat==="FINISHED_AROMA_OIL"?getFinishedAromaOilProducts(transferForm.fromWarehouse):getAllProducts(newCat); setTransferForm(f=>({...f,categoryKey:newCat,productName:prods[0]||""})); }}>{Object.entries(CATEGORIES).map(([k,c])=><option key={k} value={k}>{c.icon} {c.label}</option>)}</select></div>
+              <div><label>Product</label>{(()=>{ const prods=transferForm.categoryKey==="FINISHED_AROMA_OIL"?getFinishedAromaOilProducts(transferForm.fromWarehouse):getAllProducts(transferForm.categoryKey); return prods.length>0?<select value={transferForm.productName} onChange={e=>setTransferForm(f=>({...f,productName:e.target.value}))}>{prods.map(p=><option key={p} value={p}>{p}</option>)}</select>:<input value={transferForm.productName} onChange={e=>setTransferForm(f=>({...f,productName:e.target.value}))} placeholder="Enter product name" />; })()}</div>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
                 <div><label>Quantity</label><input type="number" min="0" step="0.01" value={transferForm.qty} onChange={e=>setTransferForm(f=>({...f,qty:e.target.value}))} placeholder="0" /></div>
                 <div><label>Transfer Date</label><input type="date" value={transferForm.date} onChange={e=>setTransferForm(f=>({...f,date:e.target.value}))} /></div>
