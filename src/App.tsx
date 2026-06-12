@@ -444,6 +444,7 @@ export default function App() {
   function submitLog() {
     if (!selectedCustomer || logProducts.length===0) return;
     const errors = [];
+    const allCodesSeen = {}; // code -> productName (first occurrence), to catch cross-row duplicates
     logProducts.forEach(p => {
       const available = getStockQty(p.categoryKey, p.productName, logWarehouse);
       if (Number(p.qty) > available) {
@@ -453,13 +454,29 @@ export default function App() {
       // Validate machine codes — mandatory and must be exactly 9 chars
       if (needsMachineCode(p.categoryKey, p.productName) && Number(p.qty) > 0) {
         const codes = p.machineCodes || [];
-        const invalid = Array.from({length: parseInt(p.qty)||0}, (_,ci) => codes[ci]).filter(c => !c || c.trim().length !== 9).length;
+        const relevant = Array.from({length: parseInt(p.qty)||0}, (_,ci) => (codes[ci]||"").trim());
+        const invalid = relevant.filter(c => !c || c.length !== 9).length;
         if (invalid > 0) {
           errors.push(`${p.productName}: All machine codes must be exactly 9 characters — ${invalid} invalid/missing`);
         }
+        // Duplicate check within this product's own codes
+        const seenInRow = {};
+        relevant.forEach(c => {
+          if (!c) return;
+          if (seenInRow[c]) errors.push(`${p.productName}: Duplicate machine code "${c}" entered more than once`);
+          seenInRow[c] = true;
+        });
+        // Duplicate check across different product rows in this log
+        relevant.forEach(c => {
+          if (!c) return;
+          if (allCodesSeen[c] && allCodesSeen[c] !== p.productName) {
+            errors.push(`Machine code "${c}" used for both "${allCodesSeen[c]}" and "${p.productName}" — each code must be unique`);
+          }
+          allCodesSeen[c] = p.productName;
+        });
       }
     });
-    if (errors.length > 0) { alert("⚠ Cannot Save!\n\n" + errors.join("\n")); return; }
+    if (errors.length > 0) { alert("⚠ Cannot Save!\n\n" + [...new Set(errors)].join("\n")); return; }
     const entry = { id:Date.now(), date:serviceDate, customer:selectedCustomer, warehouse:logWarehouse, products:JSON.stringify(logProducts), notes:logNotes };
     const updatedStock = JSON.parse(JSON.stringify(stock));
     if (!updatedStock[logWarehouse]) updatedStock[logWarehouse] = {};
