@@ -14,7 +14,8 @@ const CATEGORIES = {
   URINAL: { label:"Urinals", icon:"🚽", unit:"Pcs", lowThreshold:20, products:["Urinal Dispenser","Urinal Pouch"] },
   OIL_COMPONENTS: { label:"Oil Components", icon:"🧪", unit:"Ltrs", lowThreshold:50, products:["DPG","Alcohol"] },
   AROMA_DIFFUSER: { label:"Aroma Diffuser", icon:"🌀", unit:"Pcs", lowThreshold:20, products:["Scent Pro Medium","Scent Pro Large","Scent Pro Small","SC Mini","Hexascent","Nano Smart","Airslim","Airslim Pro","Scent Matrix","Edge","SC Magnet","Smart Small Diffuser","Aeromax Pro 100","Aeromax Pro 200","Aura Car Diffuser","Turbo Diffuser","Ecoscent","Dr. Care 200","Dr. Care 300","Dr. Care 500","Dr. Care 1000","Care Aroma 24/7","Care Aroma Scent Frame","Care Aroma Scentra","Care Aroma Glow Mist","Care Aroma Drive Mist"] },
-  PURE_OIL: { label:"Pure Oil", icon:"💧", unit:"Ltrs", lowThreshold:15, products:[] }
+  PURE_OIL: { label:"Pure Oil", icon:"💧", unit:"Ltrs", lowThreshold:15, products:[] },
+  FINISHED_AROMA_OIL: { label:"Finished Aroma Oil", icon:"♻️", unit:"Ltrs", lowThreshold:5, products:[] }
 };
 
 // Categories that need machine codes
@@ -36,9 +37,10 @@ const SERVICE_PRODUCT_TYPES = [
   { key:"OIL_COMPONENTS", label:"🧪 Oil Components", products:["DPG","Alcohol"], unit:"Ltrs" },
   { key:"AROMA_DIFFUSER", label:"🌀 Aroma Diffuser", products:["Scent Pro Medium","Scent Pro Large","Scent Pro Small","SC Mini","Hexascent","Nano Smart","Airslim","Airslim Pro","Scent Matrix","Edge","SC Magnet","Smart Small Diffuser","Aeromax Pro 100","Aeromax Pro 200","Aura Car Diffuser","Turbo Diffuser","Ecoscent","Dr. Care 200","Dr. Care 300","Dr. Care 500","Dr. Care 1000","Care Aroma 24/7","Care Aroma Scent Frame","Care Aroma Scentra","Care Aroma Glow Mist","Care Aroma Drive Mist"], unit:"Pcs" },
   { key:"PURE_OIL", label:"💧 Pure Oil", products:[], unit:"Ltrs" },
+  { key:"FINISHED_AROMA_OIL", label:"♻️ Finished Aroma Oil", products:[], unit:"Ltrs" },
 ];
 
-const TABS = { LOG:"log", CUSTOMERS:"customers", STOCK:"stock", PURCHASE:"purchase", TRANSFER:"transfer", REPORT:"report" };
+const TABS = { LOG:"log", CUSTOMERS:"customers", STOCK:"stock", PURCHASE:"purchase", TRANSFER:"transfer", RETURNS:"returns", REPORT:"report" };
 const LOG_PAGE_SIZE = 10;
 const CUSTOMER_PAGE_SIZE = 15;
 const LOW_STOCK_PAGE_SIZE = 10;
@@ -167,6 +169,9 @@ export default function App() {
   // Transfer form
   const [showTransferForm, setShowTransferForm] = useState(false);
   const [transferForm, setTransferForm] = useState({ fromWarehouse:"Al Quoz Warehouse", toWarehouse:"Ajman Warehouse", categoryKey:"BATTERY", productName:"AA", qty:"", date:today() });
+
+  const [showReturnForm, setShowReturnForm] = useState(false);
+  const [returnForm, setReturnForm] = useState({ warehouse:"Al Quoz Warehouse", productName:"", qty:"", date:today(), customer:"", notes:"" });
 
   // Customer form
   const [showCustomerForm, setShowCustomerForm] = useState(false);
@@ -545,6 +550,42 @@ export default function App() {
     setTransferForm({ fromWarehouse:"Al Quoz Warehouse", toWarehouse:"Ajman Warehouse", categoryKey:"BATTERY", productName:"AA", qty:"", date:today() });
   }
 
+  // Returns — finished/mixed aroma oil returned from service, added to FINISHED_AROMA_OIL stock
+  function submitReturn() {
+    if (!returnForm.productName) { alert("Please select or add a Finished Aroma Oil product first."); return; }
+    if (!returnForm.qty || Number(returnForm.qty)<=0) return;
+    const wh = returnForm.warehouse;
+    const catKey = "FINISHED_AROMA_OIL";
+    const prod = returnForm.productName;
+    const qty = Number(returnForm.qty);
+    const updatedStock = JSON.parse(JSON.stringify(stock));
+    if (!updatedStock[wh]) updatedStock[wh] = {};
+    if (!updatedStock[wh][catKey]) updatedStock[wh][catKey] = {};
+    const prevQty = Number(updatedStock[wh][catKey][prod])||0;
+    const newQty = prevQty + qty;
+    updatedStock[wh][catKey][prod] = newQty;
+    const returnEntry = { id:Date.now(), date:returnForm.date, warehouse:wh, category:CATEGORIES[catKey]?.label||catKey, item:prod, vendor:returnForm.customer||"", stockInHand:prevQty, received:qty, closing:newQty, unit:CATEGORIES[catKey]?.unit||"Ltrs", type:"return" };
+    setStock(updatedStock);
+    setStockHistory(h => [returnEntry, ...h]);
+    setSyncStatus("saving"); setSaving(true);
+    (async () => {
+      try {
+        await upsertStockRows([{ warehouse:wh, categoryKey:catKey, productName:prod, qty:newQty }]);
+        const { error } = await supabase.from("stock_history").insert({
+          id: returnEntry.id, date: returnEntry.date, warehouse: returnEntry.warehouse,
+          category: returnEntry.category, item: returnEntry.item, vendor: returnEntry.vendor || null,
+          stock_in_hand: returnEntry.stockInHand, received: returnEntry.received, closing: returnEntry.closing,
+          unit: returnEntry.unit, type: returnEntry.type,
+        });
+        if (error) throw error;
+        setSyncStatus("synced");
+      } catch { setSyncStatus("error"); }
+      setSaving(false);
+    })();
+    setShowReturnForm(false);
+    setReturnForm({ warehouse:"Al Quoz Warehouse", productName:"", qty:"", date:today(), customer:"", notes:"" });
+  }
+
   // Customer
   function saveCustomer() {
     if (!customerForm.name.trim()) return;
@@ -657,6 +698,7 @@ export default function App() {
             {tab===TABS.CUSTOMERS && <button className="btn btn-gold" onClick={() => { setCustomerForm({...emptyCustomer}); setEditCustomerId(null); setShowCustomerForm(true); }}>+ Add Customer</button>}
             {tab===TABS.PURCHASE && <button className="btn btn-gold" onClick={() => setShowStockForm(true)}>+ Add Stock</button>}
             {tab===TABS.TRANSFER && <button className="btn btn-transfer" onClick={() => setShowTransferForm(true)}>⇄ New Transfer</button>}
+            {tab===TABS.RETURNS && <button className="btn btn-gold" onClick={() => setShowReturnForm(true)}>♻️ New Return</button>}
             {tab===TABS.STOCK && <button className="btn btn-gold" onClick={() => { setNewProductForm({ categoryKey:"BATTERY", productName:"" }); setShowAddProductForm(true); }} style={{ fontSize:12 }}>+ Add Product</button>}
           </div>
           <div style={{ display:"flex", gap:8, alignItems:"center" }}>
@@ -686,6 +728,7 @@ export default function App() {
           { key:TABS.STOCK, label:"📦 Stock" },
           { key:TABS.PURCHASE, label:"🛒 Purchase" },
           { key:TABS.TRANSFER, label:"⇄ Transfer" },
+          { key:TABS.RETURNS, label:"♻️ Returns" },
           { key:TABS.REPORT, label:"📊 Report" },
         ].map(t => (
           <div key={t.key} className={`tab ${tab===t.key?"active":""}`} onClick={() => setTab(t.key)}>{t.label}</div>
@@ -855,7 +898,7 @@ export default function App() {
                               <div key={p} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"6px 0", borderBottom:"1px solid #2a2000" }}>
                                 <span style={{ color:"#f0e6c0", fontSize:12 }}>{p}</span>
                                 <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                                  <span style={{ fontSize:14, fontWeight:700, color:low?"#ef4444":"#c9a84c" }}>{qty} {cat.unit}</span>
+                                  <span style={{ fontSize:14, fontWeight:700, color:low?"#ef4444":"#86efac" }}>{qty} {cat.unit}</span>
                                   {low && <span className="pulse" style={{ fontSize:9, background:"#2d0f0f", color:"#f87171", border:"1px solid #ef444440", borderRadius:20, padding:"1px 6px", fontWeight:700 }}>LOW</span>}
                                 </div>
                               </div>
@@ -972,6 +1015,36 @@ export default function App() {
                         <td><span className="wh-badge" style={{ borderColor:"#4ade8044", color:"#4ade80" }}>{h.to}</span></td>
                         <td style={{ fontWeight:600, color:"#f5e6b0" }}>{h.item}</td>
                         <td style={{ color:"#4ade80", fontWeight:700 }}>{h.qty} {h.unit}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+
+          {tab===TABS.RETURNS && (
+            <>
+              <div style={{ fontSize:13, fontWeight:700, color:"#f5d060", marginBottom:16, textTransform:"uppercase", letterSpacing:1 }}>♻️ Finished Aroma Oil — Returns from Service</div>
+              <div style={{ fontSize:12, color:"#7a6a30", marginBottom:16 }}>
+                When the team returns from a service with leftover mixed/finished aroma oil (already combined Pure Oil + DPG/Alcohol), log it here. It's added to <strong style={{ color:"#c9a84c" }}>Finished Aroma Oil</strong> stock, separate from raw Pure Oil/Components — and can be reused directly in a future Service Log.
+              </div>
+              <div className="card" style={{ overflow:"auto" }}>
+                <table style={{ width:"100%", borderCollapse:"collapse" }}>
+                  <thead style={{ background:"#0a0800", borderBottom:"1px solid #3a2e10" }}>
+                    <tr><th>S.No</th><th>Date</th><th>Warehouse</th><th>Item</th><th>Returned By/Ref</th><th>Qty Returned</th><th>Closing Stock</th></tr>
+                  </thead>
+                  <tbody>
+                    {stockHistory.filter(h=>h.type==="return").length===0 && <tr><td colSpan={7} style={{ textAlign:"center", padding:30, color:"#5a4a20" }}>No returns logged yet.</td></tr>}
+                    {stockHistory.filter(h=>h.type==="return").map((h,i) => (
+                      <tr key={h.id||i}>
+                        <td style={{ color:"#5a4a20", fontSize:11 }}>{i+1}</td>
+                        <td style={{ color:"#d4b96a", whiteSpace:"nowrap" }}>{formatDate(h.date)}</td>
+                        <td><span className="wh-badge">{h.warehouse}</span></td>
+                        <td style={{ fontWeight:600, color:"#f5e6b0" }}>{h.item}</td>
+                        <td style={{ color:"#7a6a30" }}>{h.vendor||"—"}</td>
+                        <td style={{ color:"#4ade80", fontWeight:700 }}>+{h.received} {h.unit}</td>
+                        <td style={{ fontWeight:700 }}>{h.closing} {h.unit}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1101,6 +1174,46 @@ export default function App() {
             <div style={{ display:"flex", gap:10, marginTop:18, justifyContent:"flex-end" }}>
               <button className="btn btn-outline" onClick={()=>setShowStockForm(false)}>Cancel</button>
               <button className="btn btn-gold" onClick={submitStock} disabled={saving}>{saving?"Saving...":"Add to Stock"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* RETURN FINISHED AROMA OIL MODAL */}
+      {showReturnForm && (
+        <div onClick={()=>setShowReturnForm(false)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:100, backdropFilter:"blur(4px)" }}>
+          <div className="card slide-in" onClick={e=>e.stopPropagation()} style={{ width:"100%", maxWidth:500, margin:16, padding:24, background:"#0a0800", border:"1px solid #c9a84c" }}>
+            <div style={{ fontWeight:700, fontSize:17, marginBottom:18, color:"#f5d060" }}>♻️ Return Finished Aroma Oil</div>
+            <div style={{ display:"grid", gap:12 }}>
+              <div><label>Warehouse</label><select value={returnForm.warehouse} onChange={e=>setReturnForm(f=>({...f,warehouse:e.target.value}))}>{WAREHOUSES.map(w=><option key={w} value={w}>{w}</option>)}</select></div>
+              <div>
+                <label>Finished Aroma Oil Product</label>
+                {(()=>{ const prods=getAllProducts("FINISHED_AROMA_OIL"); return prods.length>0?(
+                  <select value={returnForm.productName} onChange={e=>setReturnForm(f=>({...f,productName:e.target.value}))}>
+                    <option value="">Select product...</option>
+                    {prods.map(p=><option key={p} value={p}>{p}</option>)}
+                  </select>
+                ):(
+                  <div style={{ fontSize:12, color:"#f87171", background:"#2d1515", border:"1px solid #f8717140", borderRadius:8, padding:"10px 14px" }}>
+                    No Finished Aroma Oil products yet. Go to <strong>Stock → + Add Product</strong>, choose category <strong>"Finished Aroma Oil"</strong>, and add a name (e.g. "Anantara Mix") first.
+                  </div>
+                ); })()}
+              </div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+                <div><label>Quantity Returned (Ltrs)</label><input type="number" min="0" step="0.01" value={returnForm.qty} onChange={e=>setReturnForm(f=>({...f,qty:e.target.value}))} placeholder="0" /></div>
+                <div><label>Return Date</label><input type="date" value={returnForm.date} onChange={e=>setReturnForm(f=>({...f,date:e.target.value}))} /></div>
+              </div>
+              <div><label>Returned By / Customer Ref (optional)</label><input value={returnForm.customer} onChange={e=>setReturnForm(f=>({...f,customer:e.target.value}))} placeholder="e.g. Technician name or client name" /></div>
+              {returnForm.productName && (
+                <div style={{ background:"#1a1500", border:"1px solid #3a2e10", borderRadius:8, padding:"10px 14px", fontSize:12, color:"#c9a84c" }}>
+                  {returnForm.warehouse} — Current: <strong style={{ color:"#f5d060" }}>{getStockQty("FINISHED_AROMA_OIL",returnForm.productName,returnForm.warehouse)} Ltrs</strong>
+                  {" → "}After: <strong style={{ color:"#4ade80" }}>{getStockQty("FINISHED_AROMA_OIL",returnForm.productName,returnForm.warehouse)+Number(returnForm.qty||0)} Ltrs</strong>
+                </div>
+              )}
+            </div>
+            <div style={{ display:"flex", gap:10, marginTop:18, justifyContent:"flex-end" }}>
+              <button className="btn btn-outline" onClick={()=>setShowReturnForm(false)}>Cancel</button>
+              <button className="btn btn-gold" onClick={submitReturn} disabled={saving || !returnForm.productName}>{saving?"Saving...":"Add Return to Stock"}</button>
             </div>
           </div>
         </div>
