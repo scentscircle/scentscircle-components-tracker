@@ -539,7 +539,8 @@ export default function App() {
   // Stock helpers — warehouse-aware
   function getStockQty(categoryKey, productName, warehouse) {
     const wh = warehouse || stockFilterWarehouse;
-    return Number(stock[wh]?.[categoryKey]?.[productName]) || 0;
+    const raw = Number(stock[wh]?.[categoryKey]?.[productName]) || 0;
+    return Math.round(raw*100)/100;
   }
 
   // Per-product low stock threshold, falling back to the category default
@@ -972,8 +973,8 @@ export default function App() {
     { label:"Aerosol Refill", value:monthStats.productTotals?.AEROSOL_REFILL||0, unit:"Nos", color:"#c9a84c" },
     { label:"Urinal Pouch", value:(() => { let t=0; monthLogs.forEach(l => { try { JSON.parse(l.products||"[]").forEach(p => { if(p.categoryKey==="URINAL"&&p.productName==="Urinal Pouch") t+=Number(p.qty||0); }); } catch {} }); return t; })(), unit:"Nos", color:"#fb923c" },
     { label:"Battery", value:monthStats.productTotals?.BATTERY||0, unit:"Nos", color:"#facc15" },
-    { label:"DPG", value:(() => { let t=0; monthLogs.forEach(l => { try { JSON.parse(l.products||"[]").forEach(p => { if(p.categoryKey==="OIL_COMPONENTS"&&p.productName==="DPG") t+=Number(p.qty||0); }); } catch {} }); return t; })(), unit:"Ltrs", color:"#4ade80" },
-    { label:"Alcohol", value:(() => { let t=0; monthLogs.forEach(l => { try { JSON.parse(l.products||"[]").forEach(p => { if(p.categoryKey==="OIL_COMPONENTS"&&p.productName==="Alcohol") t+=Number(p.qty||0); }); } catch {} }); return t; })(), unit:"Ltrs", color:"#7ec8e3" },
+    { label:"DPG", value:Math.round((() => { let t=0; monthLogs.forEach(l => { try { JSON.parse(l.products||"[]").forEach(p => { if(p.categoryKey==="OIL_COMPONENTS"&&p.productName==="DPG") t+=Number(p.qty||0); }); } catch {} }); return t; })()*100)/100, unit:"Ltrs", color:"#4ade80" },
+    { label:"Alcohol", value:Math.round((() => { let t=0; monthLogs.forEach(l => { try { JSON.parse(l.products||"[]").forEach(p => { if(p.categoryKey==="OIL_COMPONENTS"&&p.productName==="Alcohol") t+=Number(p.qty||0); }); } catch {} }); return t; })()*100)/100, unit:"Ltrs", color:"#7ec8e3" },
     { label:"Customers Served", value:monthStats.customers, color:"#f87171" },
   ];
 
