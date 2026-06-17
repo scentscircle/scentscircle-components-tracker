@@ -263,12 +263,49 @@ function ReportTab({ logs, customers, stock, stockHistory, pureOilProducts }) {
     }).filter(r => r.opening!==0 || r.closing!==0 || r.purchasesReturns!==0 || r.transferIn!==0 || r.transferOut!==0 || r.consumed!==0);
   }, [reportSubTab, stock, stockHistory, logs, pureOilProducts, stockReportWarehouse, stockReportMonth]);
 
+  // Battery / Aerosol Refill / Urinal Pouch — Product Consumption Report
+  const PRODUCT_CONSUMPTION_OPTIONS = useMemo(() => {
+    const opts = [];
+    CATEGORIES.BATTERY.products.forEach(p => opts.push({ categoryKey:"BATTERY", productName:p, label:`🔋 ${p} (Battery)` }));
+    CATEGORIES.AEROSOL_REFILL.products.forEach(p => opts.push({ categoryKey:"AEROSOL_REFILL", productName:p, label:`🌸 ${p} (Aerosol Refill)` }));
+    opts.push({ categoryKey:"URINAL", productName:"Urinal Pouch", label:"🚽 Urinal Pouch" });
+    return opts;
+  }, []);
+
+  const [consumptionProductKey, setConsumptionProductKey] = useState(`${PRODUCT_CONSUMPTION_OPTIONS[0]?.categoryKey}|${PRODUCT_CONSUMPTION_OPTIONS[0]?.productName}`);
+  const [consumptionMonth, setConsumptionMonth] = useState(`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`);
+
+  const productConsumptionRows = useMemo(() => {
+    if (reportSubTab !== "productconsumption") return [];
+    const [catKey, prodName] = consumptionProductKey.split("|");
+    const rows = [];
+    const list = consumptionMonth ? logs.filter(l => String(l.date).split("T")[0].startsWith(consumptionMonth)) : logs;
+    list.forEach(l => {
+      let prods = [];
+      try { prods = JSON.parse(l.products||"[]"); } catch {}
+      prods.forEach((p:any) => {
+        if (p.categoryKey===catKey && p.productName===prodName) {
+          rows.push({ date:l.date, customer:l.customer, warehouse:l.warehouse, qty:Number(p.qty)||0, technician:l.technician||"" });
+        }
+      });
+    });
+    rows.sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    return rows;
+  }, [reportSubTab, consumptionProductKey, consumptionMonth, logs]);
+
+  const productConsumptionTotal = useMemo(() => productConsumptionRows.reduce((s,r)=>s+r.qty,0), [productConsumptionRows]);
+  const productConsumptionUnit = useMemo(() => {
+    const [catKey] = consumptionProductKey.split("|");
+    return CATEGORIES[catKey]?.unit || "";
+  }, [consumptionProductKey]);
+
   return (
     <>
       <div style={{ display:"flex", gap:8, marginBottom:20, borderBottom:"1px solid #2a2000" }}>
         {[
           {key:"stockreport",label:"🧪 Pure Oil Opening/Closing"},
           {key:"customerusage",label:"👥 Customer Usage"},
+          {key:"productconsumption",label:"🔋 Battery/Aerosol Consumption"},
         ].map(t=>(
           <div key={t.key} onClick={()=>setReportSubTab(t.key)} style={{ cursor:"pointer", padding:"10px 18px", fontSize:13, fontWeight:600, color:reportSubTab===t.key?"#f5d060":"#7a6a30", borderBottom:reportSubTab===t.key?"2px solid #f5d060":"2px solid transparent" }}>{t.label}</div>
         ))}
@@ -399,6 +436,52 @@ function ReportTab({ logs, customers, stock, stockHistory, pureOilProducts }) {
           </div>
         </div>
       )}
+      </>
+      )}
+
+      {reportSubTab==="productconsumption" && (
+      <>
+      <div style={{ display:"flex", gap:14, marginBottom:20, alignItems:"flex-end", flexWrap:"wrap" }}>
+        <div style={{ flex:"1 1 260px", maxWidth:340 }}>
+          <label>Select Product</label>
+          <select value={consumptionProductKey} onChange={e=>setConsumptionProductKey(e.target.value)}>
+            {PRODUCT_CONSUMPTION_OPTIONS.map(o => <option key={`${o.categoryKey}|${o.productName}`} value={`${o.categoryKey}|${o.productName}`}>{o.label}</option>)}
+          </select>
+        </div>
+        <div><label>Select Month</label><input type="month" value={consumptionMonth} onChange={e=>setConsumptionMonth(e.target.value)} style={{ width:200 }} /></div>
+        {consumptionMonth && <button onClick={()=>setConsumptionMonth("")} style={{ cursor:"pointer", background:"transparent", border:"1px solid #c9a84c55", borderRadius:8, color:"#c9a84c", padding:"8px 14px", fontSize:13, fontFamily:"Poppins,sans-serif", fontWeight:600, alignSelf:"flex-end" }}>Show All</button>}
+        <div style={{ marginLeft:"auto", alignSelf:"flex-end", fontSize:13, color:"#7a6a30" }}>{productConsumptionRows.length} log entries</div>
+      </div>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12, flexWrap:"wrap", gap:8 }}>
+        <div style={{ fontSize:14, fontWeight:700, color:"#f5d060", textTransform:"uppercase", letterSpacing:1 }}>
+          Total Consumed: <span style={{ color:"#4ade80" }}>{Math.round(productConsumptionTotal*100)/100} {productConsumptionUnit}</span> — {consumptionMonth ? new Date(consumptionMonth+"-01").toLocaleString("en",{month:"long",year:"numeric"}) : "All Time"}
+        </div>
+        <button className="btn btn-outline" disabled={productConsumptionRows.length===0} onClick={()=>exportToCSV(
+          `${consumptionProductKey.split("|")[1].replace(/[^a-z0-9]+/gi,"_")}_consumption_${consumptionMonth||"all_time"}.csv`,
+          ["Date","Customer","Warehouse","Technician","Qty Used"],
+          productConsumptionRows.map((r:any)=>[formatDate(r.date),r.customer,r.warehouse,r.technician||"—",`${r.qty} ${productConsumptionUnit}`])
+        )}>⬇ Download CSV</button>
+      </div>
+      <div style={{ background:"#0f0e00", border:"1px solid #3a2e10", borderRadius:14, overflow:"auto" }}>
+        <table style={{ width:"100%", borderCollapse:"collapse" }}>
+          <thead style={{ background:"#0a0800", borderBottom:"1px solid #3a2e10" }}>
+            <tr>{["#","Date","Customer","Warehouse","Technician","Qty Used"].map(h=><th key={h} style={{ color:"#c9a84c", fontSize:11, fontWeight:600, letterSpacing:"0.5px", textTransform:"uppercase", padding:"10px 14px", textAlign:"left" }}>{h}</th>)}</tr>
+          </thead>
+          <tbody>
+            {productConsumptionRows.length===0 && <tr><td colSpan={6} style={{ textAlign:"center", padding:40, color:"#5a4a20", fontSize:13 }}>No usage found for this product in this period.</td></tr>}
+            {productConsumptionRows.map((r:any,i:number) => (
+              <tr key={i} style={{ borderBottom:"1px solid #2a2000" }}>
+                <td style={{ padding:"11px 14px", color:"#5a4a20", fontSize:11 }}>{i+1}</td>
+                <td style={{ padding:"11px 14px", color:"#d4b96a", fontSize:13, whiteSpace:"nowrap" }}>{formatDate(r.date)}</td>
+                <td style={{ padding:"11px 14px", fontWeight:600, color:"#f5e6b0", fontSize:13 }}>{r.customer}</td>
+                <td style={{ padding:"11px 14px" }}><span className="wh-badge">{r.warehouse||"—"}</span></td>
+                <td style={{ padding:"11px 14px", color:"#a78bfa", fontSize:12 }}>{r.technician||"—"}</td>
+                <td style={{ padding:"11px 14px", color:"#f5d060", fontWeight:700, fontSize:13 }}>{r.qty} {productConsumptionUnit}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
       </>
       )}
     </>
@@ -536,13 +619,29 @@ export default function App() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  // Background safety refresh — keeps on-screen stock figures from drifting too far
+  // from the database during a long session (the atomic adjust_stock RPC already
+  // prevents write-time race conditions; this just keeps the read-side display fresh).
+  useEffect(() => {
+    const interval = setInterval(() => { if (!saving) fetchData(); }, 120000); // every 2 minutes
+    return () => clearInterval(interval);
+  }, [fetchData, saving]);
+
   // Upsert a set of stock rows (warehouse/categoryKey/productName/qty)
-  async function upsertStockRows(rows) {
-    const payload = rows.map(r => ({
-      warehouse: r.warehouse, category_key: r.categoryKey, product_name: r.productName, qty: r.qty,
-    }));
-    const { error } = await supabase.from("stock").upsert(payload, { onConflict: "warehouse,category_key,product_name" });
-    if (error) throw error;
+  // Atomic delta-based stock adjustment via Postgres RPC — avoids race conditions /
+  // stale-state bugs since the +/- happens inside the database, not computed in JS
+  // from a possibly-outdated copy of `stock`. Returns the new authoritative qty.
+  // rows: [{ warehouse, categoryKey, productName, delta }]  (delta can be + or -)
+  async function adjustStockAtomic(rows) {
+    const results = [];
+    for (const r of rows) {
+      const { data, error } = await supabase.rpc("adjust_stock", {
+        p_warehouse: r.warehouse, p_category_key: r.categoryKey, p_product_name: r.productName, p_delta: r.delta,
+      });
+      if (error) throw error;
+      results.push({ ...r, newQty: Number(data) });
+    }
+    return results;
   }
 
   // Stock helpers — warehouse-aware
@@ -799,17 +898,6 @@ export default function App() {
     });
     if (errors.length > 0) { alert("⚠ Cannot Save!\n\n" + [...new Set(errors)].join("\n")); return; }
     const entry = { id:Date.now(), date:serviceDate, customer:selectedCustomer, warehouse:logWarehouse, products:JSON.stringify(logProducts), notes:logNotes, technician:logTechnician };
-    const updatedStock = JSON.parse(JSON.stringify(stock));
-    if (!updatedStock[logWarehouse]) updatedStock[logWarehouse] = {};
-    const changedRows = [];
-    logProducts.forEach(p => {
-      if (!updatedStock[logWarehouse][p.categoryKey]) updatedStock[logWarehouse][p.categoryKey] = {};
-      const newQty = Math.max(0, (Number(updatedStock[logWarehouse][p.categoryKey][p.productName])||0) - Number(p.qty||0));
-      updatedStock[logWarehouse][p.categoryKey][p.productName] = newQty;
-      changedRows.push({ warehouse:logWarehouse, categoryKey:p.categoryKey, productName:p.productName, qty:newQty });
-    });
-    setStock(updatedStock);
-    setLogs(l => [entry, ...l]);
     setSyncStatus("saving"); setSaving(true);
     (async () => {
       try {
@@ -818,76 +906,91 @@ export default function App() {
           products: JSON.parse(entry.products), notes: entry.notes || null, technician: entry.technician || null,
         });
         if (logErr) throw logErr;
-        await upsertStockRows(changedRows);
+
+        // Atomic, authoritative stock decrement — done in the DB, not from local state
+        const deltaRows = logProducts.map(p => ({
+          warehouse: logWarehouse, categoryKey: p.categoryKey, productName: p.productName, delta: -Number(p.qty||0),
+        }));
+        const results = await adjustStockAtomic(deltaRows);
+
+        // Sync local state with the authoritative values returned by the database
+        setStock(prev => {
+          const updated = JSON.parse(JSON.stringify(prev));
+          if (!updated[logWarehouse]) updated[logWarehouse] = {};
+          results.forEach(r => {
+            if (!updated[logWarehouse][r.categoryKey]) updated[logWarehouse][r.categoryKey] = {};
+            updated[logWarehouse][r.categoryKey][r.productName] = r.newQty;
+          });
+          return updated;
+        });
+        setLogs(l => [entry, ...l]);
         setSyncStatus("synced");
-      } catch { setSyncStatus("error"); }
+        setSelectedCustomer(""); setLogProducts([{...emptyProduct}]); setLogNotes(""); setLogTechnician(""); setShowLogForm(false);
+      } catch (err) {
+        setSyncStatus("error");
+        alert("⚠ Save Failed!\n\nThe service log and/or stock update could not be saved. Please check your internet connection and try again. If this keeps happening, contact admin — stock figures may need manual verification.\n\n" + (err?.message||""));
+      }
       setSaving(false);
     })();
-    setSelectedCustomer(""); setLogProducts([{...emptyProduct}]); setLogNotes(""); setLogTechnician(""); setShowLogForm(false);
   }
 
   // Submit stock purchase
   function submitStock() {
     if (!stockForm.qty || Number(stockForm.qty)<=0) return;
-    const updatedStock = JSON.parse(JSON.stringify(stock));
-    if (!updatedStock[stockForm.warehouse]) updatedStock[stockForm.warehouse] = {};
-    if (!updatedStock[stockForm.warehouse][stockForm.categoryKey]) updatedStock[stockForm.warehouse][stockForm.categoryKey] = {};
     const cat = CATEGORIES[stockForm.categoryKey];
-    const prevQty = Number(updatedStock[stockForm.warehouse][stockForm.categoryKey][stockForm.productName])||0;
     const addQty = Number(stockForm.qty);
-    const closingQty = prevQty + addQty;
-    updatedStock[stockForm.warehouse][stockForm.categoryKey][stockForm.productName] = closingQty;
-    const historyEntry = { id:Date.now(), date:stockForm.dateReceived, warehouse:stockForm.warehouse, category:cat?.label||stockForm.categoryKey, item:stockForm.productName, vendor:stockForm.vendor, stockInHand:prevQty, received:addQty, closing:closingQty, unit:cat?.unit||"Pcs", type:"purchase" };
-    setStock(updatedStock);
-    setStockHistory(h => [historyEntry, ...h]);
+    const prevQtyForLog = getStockQty(stockForm.categoryKey, stockForm.productName, stockForm.warehouse); // for display only
+    const historyEntry = { id:Date.now(), date:stockForm.dateReceived, warehouse:stockForm.warehouse, category:cat?.label||stockForm.categoryKey, item:stockForm.productName, vendor:stockForm.vendor, stockInHand:prevQtyForLog, received:addQty, closing:prevQtyForLog+addQty, unit:cat?.unit||"Pcs", type:"purchase" };
     setSyncStatus("saving"); setSaving(true);
     (async () => {
       try {
-        await upsertStockRows([{ warehouse:stockForm.warehouse, categoryKey:stockForm.categoryKey, productName:stockForm.productName, qty:closingQty }]);
+        const [result] = await adjustStockAtomic([{ warehouse:stockForm.warehouse, categoryKey:stockForm.categoryKey, productName:stockForm.productName, delta:addQty }]);
+        // Use the authoritative closing value from the DB for the history record
         const { error } = await supabase.from("stock_history").insert({
           id: historyEntry.id, date: historyEntry.date, warehouse: historyEntry.warehouse,
           category: historyEntry.category, item: historyEntry.item, vendor: historyEntry.vendor || null,
-          stock_in_hand: historyEntry.stockInHand, received: historyEntry.received, closing: historyEntry.closing,
+          stock_in_hand: result.newQty - addQty, received: addQty, closing: result.newQty,
           unit: historyEntry.unit, type: historyEntry.type,
         });
         if (error) throw error;
+        setStock(prev => {
+          const updated = JSON.parse(JSON.stringify(prev));
+          if (!updated[stockForm.warehouse]) updated[stockForm.warehouse] = {};
+          if (!updated[stockForm.warehouse][stockForm.categoryKey]) updated[stockForm.warehouse][stockForm.categoryKey] = {};
+          updated[stockForm.warehouse][stockForm.categoryKey][stockForm.productName] = result.newQty;
+          return updated;
+        });
+        setStockHistory(h => [{ ...historyEntry, stockInHand: result.newQty - addQty, closing: result.newQty }, ...h]);
         setSyncStatus("synced");
-      } catch { setSyncStatus("error"); }
+        setStockForm({ categoryKey:"BATTERY", productName:"AA", qty:"", dateReceived:today(), vendor:"", warehouse:"Al Quoz Warehouse" });
+        setShowStockForm(false);
+      } catch (err) {
+        setSyncStatus("error");
+        alert("⚠ Save Failed!\n\nStock could not be updated. Please check your connection and try again.\n\n" + (err?.message||""));
+      }
       setSaving(false);
     })();
-    setStockForm({ categoryKey:"BATTERY", productName:"AA", qty:"", dateReceived:today(), vendor:"", warehouse:"Al Quoz Warehouse" });
-    setShowStockForm(false);
   }
 
   // Submit transfer
   function submitTransfer() {
     if (!transferForm.qty || Number(transferForm.qty)<=0) return;
     if (transferForm.fromWarehouse === transferForm.toWarehouse) { alert("From and To warehouse cannot be the same!"); return; }
-    const updatedStock = JSON.parse(JSON.stringify(stock));
     const from = transferForm.fromWarehouse;
     const to = transferForm.toWarehouse;
     const catKey = transferForm.categoryKey;
     const prod = transferForm.productName;
     const qty = Number(transferForm.qty);
-    const available = Number(updatedStock[from]?.[catKey]?.[prod])||0;
-    if (qty > available) { alert(`⚠ Only ${available} available in ${from}`); return; }
-    if (!updatedStock[from]) updatedStock[from] = {};
-    if (!updatedStock[from][catKey]) updatedStock[from][catKey] = {};
-    if (!updatedStock[to]) updatedStock[to] = {};
-    if (!updatedStock[to][catKey]) updatedStock[to][catKey] = {};
-    const newFromQty = available - qty;
-    const newToQty = (Number(updatedStock[to][catKey][prod])||0) + qty;
-    updatedStock[from][catKey][prod] = newFromQty;
-    updatedStock[to][catKey][prod] = newToQty;
+    const available = getStockQty(catKey, prod, from); // upfront check using local state (best-effort warning)
+    if (qty > available) { alert(`⚠ Only ${available} available in ${from}. Refresh and try again if this seems wrong.`); return; }
     const transferEntry = { id:Date.now(), date:transferForm.date, type:"transfer", from, to, category:CATEGORIES[catKey]?.label||catKey, item:prod, qty, unit:CATEGORIES[catKey]?.unit||"Pcs" };
-    setStock(updatedStock);
-    setStockHistory(h => [transferEntry, ...h]);
     setSyncStatus("saving"); setSaving(true);
     (async () => {
       try {
-        await upsertStockRows([
-          { warehouse:from, categoryKey:catKey, productName:prod, qty:newFromQty },
-          { warehouse:to, categoryKey:catKey, productName:prod, qty:newToQty },
+        // Atomic: deduct from source, add to destination — both via DB-side delta
+        const results = await adjustStockAtomic([
+          { warehouse:from, categoryKey:catKey, productName:prod, delta:-qty },
+          { warehouse:to, categoryKey:catKey, productName:prod, delta:qty },
         ]);
         const { error } = await supabase.from("stock_history").insert({
           id: transferEntry.id, date: transferEntry.date, type: "transfer",
@@ -895,12 +998,25 @@ export default function App() {
           item: transferEntry.item, qty: transferEntry.qty, unit: transferEntry.unit,
         });
         if (error) throw error;
+        setStock(prev => {
+          const updated = JSON.parse(JSON.stringify(prev));
+          results.forEach(r => {
+            if (!updated[r.warehouse]) updated[r.warehouse] = {};
+            if (!updated[r.warehouse][r.categoryKey]) updated[r.warehouse][r.categoryKey] = {};
+            updated[r.warehouse][r.categoryKey][r.productName] = r.newQty;
+          });
+          return updated;
+        });
+        setStockHistory(h => [transferEntry, ...h]);
         setSyncStatus("synced");
-      } catch { setSyncStatus("error"); }
+        setShowTransferForm(false);
+        setTransferForm({ fromWarehouse:"Al Quoz Warehouse", toWarehouse:"Ajman Warehouse", categoryKey:"BATTERY", productName:"AA", qty:"", date:today() });
+      } catch (err) {
+        setSyncStatus("error");
+        alert("⚠ Transfer Failed!\n\nPlease check your connection and try again.\n\n" + (err?.message||""));
+      }
       setSaving(false);
     })();
-    setShowTransferForm(false);
-    setTransferForm({ fromWarehouse:"Al Quoz Warehouse", toWarehouse:"Ajman Warehouse", categoryKey:"BATTERY", productName:"AA", qty:"", date:today() });
   }
 
   // Returns — finished/mixed aroma oil returned from service, added to FINISHED_AROMA_OIL stock
@@ -911,19 +1027,11 @@ export default function App() {
     const catKey = "FINISHED_AROMA_OIL";
     const prod = returnForm.productName;
     const qty = Number(returnForm.qty);
-    const updatedStock = JSON.parse(JSON.stringify(stock));
-    if (!updatedStock[wh]) updatedStock[wh] = {};
-    if (!updatedStock[wh][catKey]) updatedStock[wh][catKey] = {};
-    const prevQty = Number(updatedStock[wh][catKey][prod])||0;
-    const newQty = prevQty + qty;
-    updatedStock[wh][catKey][prod] = newQty;
-    const returnEntry = { id:Date.now(), date:returnForm.date, warehouse:wh, category:CATEGORIES[catKey]?.label||catKey, item:prod, vendor:returnForm.customer||"", stockInHand:prevQty, received:qty, closing:newQty, unit:CATEGORIES[catKey]?.unit||"Ltrs", type:"return" };
-    setStock(updatedStock);
-    setStockHistory(h => [returnEntry, ...h]);
     setSyncStatus("saving"); setSaving(true);
     (async () => {
       try {
-        await upsertStockRows([{ warehouse:wh, categoryKey:catKey, productName:prod, qty:newQty }]);
+        const [result] = await adjustStockAtomic([{ warehouse:wh, categoryKey:catKey, productName:prod, delta:qty }]);
+        const returnEntry = { id:Date.now(), date:returnForm.date, warehouse:wh, category:CATEGORIES[catKey]?.label||catKey, item:prod, vendor:returnForm.customer||"", stockInHand:result.newQty-qty, received:qty, closing:result.newQty, unit:CATEGORIES[catKey]?.unit||"Ltrs", type:"return" };
         const { error } = await supabase.from("stock_history").insert({
           id: returnEntry.id, date: returnEntry.date, warehouse: returnEntry.warehouse,
           category: returnEntry.category, item: returnEntry.item, vendor: returnEntry.vendor || null,
@@ -931,12 +1039,23 @@ export default function App() {
           unit: returnEntry.unit, type: returnEntry.type,
         });
         if (error) throw error;
+        setStock(prev => {
+          const updated = JSON.parse(JSON.stringify(prev));
+          if (!updated[wh]) updated[wh] = {};
+          if (!updated[wh][catKey]) updated[wh][catKey] = {};
+          updated[wh][catKey][prod] = result.newQty;
+          return updated;
+        });
+        setStockHistory(h => [returnEntry, ...h]);
         setSyncStatus("synced");
-      } catch { setSyncStatus("error"); }
+        setShowReturnForm(false);
+        setReturnForm({ warehouse:"Al Quoz Warehouse", productName:"", qty:"", date:today(), customer:"", notes:"" });
+      } catch (err) {
+        setSyncStatus("error");
+        alert("⚠ Return Save Failed!\n\nPlease check your connection and try again.\n\n" + (err?.message||""));
+      }
       setSaving(false);
     })();
-    setShowReturnForm(false);
-    setReturnForm({ warehouse:"Al Quoz Warehouse", productName:"", qty:"", date:today(), customer:"", notes:"" });
   }
 
   // Customer
