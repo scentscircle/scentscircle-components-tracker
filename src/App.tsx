@@ -199,6 +199,9 @@ function ReportTab({ logs, customers, stock, stockHistory, pureOilProducts }) {
   const [stockReportMonth, setStockReportMonth] = useState(`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`);
   const [stockReportWarehouse, setStockReportWarehouse] = useState("ALL");
   const [expandedCustomers, setExpandedCustomers] = useState({});
+  const [customerUsageSearch, setCustomerUsageSearch] = useState("");
+  const [customerUsagePage, setCustomerUsagePage] = useState(1);
+  const CUSTOMER_USAGE_PAGE_SIZE = 15;
 
   const filtered = useMemo(() => {
     if (!reportMonth) return logs;
@@ -228,6 +231,17 @@ function ReportTab({ logs, customers, stock, stockHistory, pureOilProducts }) {
     });
     return Object.entries(map).sort((a,b) => a[0].localeCompare(b[0]));
   }, [filtered]);
+
+  const filteredCustomerUsageList = useMemo(() => {
+    if (!customerUsageSearch.trim()) return customerUsageList;
+    const q = customerUsageSearch.trim().toLowerCase();
+    return customerUsageList.filter(([name]) => name.toLowerCase().includes(q));
+  }, [customerUsageList, customerUsageSearch]);
+
+  const totalCustomerUsagePages = Math.ceil(filteredCustomerUsageList.length / CUSTOMER_USAGE_PAGE_SIZE) || 1;
+  const paginatedCustomerUsageList = filteredCustomerUsageList.slice((customerUsagePage-1)*CUSTOMER_USAGE_PAGE_SIZE, customerUsagePage*CUSTOMER_USAGE_PAGE_SIZE);
+
+  useEffect(() => { setCustomerUsagePage(1); }, [customerUsageSearch, reportMonth]);
 
   function toggleCustomer(name) {
     setExpandedCustomers(prev => ({ ...prev, [name]: !prev[name] }));
@@ -316,16 +330,17 @@ function ReportTab({ logs, customers, stock, stockHistory, pureOilProducts }) {
       <div style={{ display:"flex", gap:14, marginBottom:20, alignItems:"flex-end", flexWrap:"wrap" }}>
         <div><label>Select Month</label><input type="month" value={reportMonth} onChange={e=>setReportMonth(e.target.value)} style={{ width:200 }} /></div>
         {reportMonth && <button onClick={()=>setReportMonth("")} style={{ cursor:"pointer", background:"transparent", border:"1px solid #c9a84c55", borderRadius:8, color:"#c9a84c", padding:"8px 14px", fontSize:13, fontFamily:"Poppins,sans-serif", fontWeight:600, alignSelf:"flex-end" }}>Show All</button>}
-        <div style={{ marginLeft:"auto", alignSelf:"flex-end", fontSize:13, color:"#7a6a30" }}>{customerUsageList.length} customers</div>
+        <div style={{ flex:"1 1 220px", maxWidth:300 }}><label>Search Customer</label><input value={customerUsageSearch} onChange={e=>setCustomerUsageSearch(e.target.value)} placeholder="🔍 Search by customer name..." /></div>
+        <div style={{ marginLeft:"auto", alignSelf:"flex-end", fontSize:13, color:"#7a6a30" }}>{filteredCustomerUsageList.length} of {customerUsageList.length} customers</div>
       </div>
       <div style={{ fontSize:14, fontWeight:700, color:"#f5d060", marginBottom:14, textTransform:"uppercase", letterSpacing:1 }}>
         👥 Customer Usage — {reportMonth ? new Date(reportMonth+"-01").toLocaleString("en",{month:"long",year:"numeric"}) : "All Time"}
       </div>
-      {customerUsageList.length===0 && (
-        <div style={{ background:"#0f0e00", border:"1px solid #3a2e10", borderRadius:14, padding:40, textAlign:"center", color:"#5a4a20", fontSize:13 }}>No service log entries found for this period.</div>
+      {filteredCustomerUsageList.length===0 && (
+        <div style={{ background:"#0f0e00", border:"1px solid #3a2e10", borderRadius:14, padding:40, textAlign:"center", color:"#5a4a20", fontSize:13 }}>{customerUsageList.length===0 ? "No service log entries found for this period." : "No customers match your search."}</div>
       )}
       <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-        {customerUsageList.map(([customerName, data]:[string,any]) => {
+        {paginatedCustomerUsageList.map(([customerName, data]:[string,any]) => {
           const isOpen = !!expandedCustomers[customerName];
           return (
             <div key={customerName} style={{ background:"#0f0e00", border:"1px solid #3a2e10", borderRadius:14, overflow:"hidden" }}>
@@ -369,6 +384,21 @@ function ReportTab({ logs, customers, stock, stockHistory, pureOilProducts }) {
           );
         })}
       </div>
+      {filteredCustomerUsageList.length > 0 && totalCustomerUsagePages > 1 && (
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:16, flexWrap:"wrap", gap:10 }}>
+          <div style={{ fontSize:12, color:"#7a6a30" }}>
+            Showing {(customerUsagePage-1)*CUSTOMER_USAGE_PAGE_SIZE+1}–{Math.min(customerUsagePage*CUSTOMER_USAGE_PAGE_SIZE, filteredCustomerUsageList.length)} of {filteredCustomerUsageList.length}
+          </div>
+          <div style={{ display:"flex", gap:6 }}>
+            <button className="btn btn-outline" style={{ fontSize:12 }} onClick={()=>setCustomerUsagePage(p=>Math.max(1,p-1))} disabled={customerUsagePage===1}>← Prev</button>
+            {Array.from({length:Math.min(5,totalCustomerUsagePages)},(_,i)=>{
+              let page = totalCustomerUsagePages<=5 ? i+1 : customerUsagePage<=3 ? i+1 : customerUsagePage>=totalCustomerUsagePages-2 ? totalCustomerUsagePages-4+i : customerUsagePage-2+i;
+              return <button key={page} onClick={()=>setCustomerUsagePage(page)} style={{ cursor:"pointer", background:customerUsagePage===page?"linear-gradient(135deg,#f5d060,#c9a84c)":"transparent", color:customerUsagePage===page?"#000":"#c9a84c", border:`1px solid ${customerUsagePage===page?"#c9a84c":"#3a2e10"}`, borderRadius:8, padding:"6px 12px", fontSize:12, fontFamily:"Poppins,sans-serif", fontWeight:600, minWidth:34 }}>{page}</button>;
+            })}
+            <button className="btn btn-outline" style={{ fontSize:12 }} onClick={()=>setCustomerUsagePage(p=>Math.min(totalCustomerUsagePages,p+1))} disabled={customerUsagePage===totalCustomerUsagePages}>Next →</button>
+          </div>
+        </div>
+      )}
       </>
       )}
     </>
