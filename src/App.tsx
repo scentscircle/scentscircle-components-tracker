@@ -194,54 +194,44 @@ function computeOpeningClosing({ stock, stockHistory, logs, categoryKey, categor
 
 function ReportTab({ logs, customers, stock, stockHistory, pureOilProducts }) {
   const now = new Date();
-  const [reportSubTab, setReportSubTab] = useState("stockreport"); // stockreport | pureoilconsumption | otherconsumption
+  const [reportSubTab, setReportSubTab] = useState("stockreport"); // stockreport | customerusage
   const [reportMonth, setReportMonth] = useState(`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`);
   const [stockReportMonth, setStockReportMonth] = useState(`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`);
   const [stockReportWarehouse, setStockReportWarehouse] = useState("ALL");
+  const [expandedCustomers, setExpandedCustomers] = useState({});
 
   const filtered = useMemo(() => {
     if (!reportMonth) return logs;
     return logs.filter(l => String(l.date).split("T")[0].startsWith(reportMonth));
   }, [logs, reportMonth]);
 
-  // Generic: consumption by customer for a given set of category keys, for the selected month
-  function buildConsumptionByCustomer(categoryKeys) {
-    const rows = [];
-    filtered.forEach(l => {
+  // Per-customer list with visit count + usage rows (date-wise, all categories combined)
+  const customerUsageList = useMemo(() => {
+    const map: Record<string, {visits:number, rows:any[]}> = {};
+    filtered.forEach((l:any) => {
+      if (!map[l.customer]) map[l.customer] = { visits:0, rows:[] };
+      map[l.customer].visits++;
       let prods = [];
       try { prods = JSON.parse(l.products||"[]"); } catch {}
-      prods.forEach(p => {
-        if (!categoryKeys.includes(p.categoryKey)) return;
-        rows.push({
-          customer: l.customer,
+      prods.forEach((p:any) => {
+        map[l.customer].rows.push({
+          date: l.date,
           category: CATEGORIES[p.categoryKey]?.label || p.categoryKey,
           product: p.productName,
           qty: Number(p.qty)||0,
           unit: CATEGORIES[p.categoryKey]?.unit || "",
-          date: l.date,
-          warehouse: l.warehouse,
         });
       });
     });
-    // Aggregate by customer + category + product
-    const map = {};
-    rows.forEach(r => {
-      const key = `${r.customer}|${r.category}|${r.product}`;
-      if (!map[key]) map[key] = { customer:r.customer, category:r.category, product:r.product, qty:0, unit:r.unit };
-      map[key].qty += r.qty;
+    Object.values(map).forEach((d:any) => {
+      d.rows.sort((a:any,b:any) => new Date(a.date).getTime() - new Date(b.date).getTime());
     });
-    return Object.values(map).sort((a:any,b:any) => a.customer.localeCompare(b.customer) || a.category.localeCompare(b.category) || a.product.localeCompare(b.product));
+    return Object.entries(map).sort((a,b) => a[0].localeCompare(b[0]));
+  }, [filtered]);
+
+  function toggleCustomer(name) {
+    setExpandedCustomers(prev => ({ ...prev, [name]: !prev[name] }));
   }
-
-  const pureOilConsumption = useMemo(() => {
-    if (reportSubTab !== "pureoilconsumption") return [];
-    return buildConsumptionByCustomer(["PURE_OIL"]);
-  }, [reportSubTab, filtered]);
-
-  const otherConsumption = useMemo(() => {
-    if (reportSubTab !== "otherconsumption") return [];
-    return buildConsumptionByCustomer(["AEROSOL_REFILL","BATTERY","URINAL"]);
-  }, [reportSubTab, filtered]);
 
 
   const PURE_OIL_BASELINE_DATE = "2026-06-12";
@@ -264,8 +254,7 @@ function ReportTab({ logs, customers, stock, stockHistory, pureOilProducts }) {
       <div style={{ display:"flex", gap:8, marginBottom:20, borderBottom:"1px solid #2a2000" }}>
         {[
           {key:"stockreport",label:"🧪 Pure Oil Opening/Closing"},
-          {key:"pureoilconsumption",label:"💧 Pure Oil — Customer Usage"},
-          {key:"otherconsumption",label:"🔋 Aerosol/Battery/Urinal — Customer Usage"},
+          {key:"customerusage",label:"👥 Customer Usage"},
         ].map(t=>(
           <div key={t.key} onClick={()=>setReportSubTab(t.key)} style={{ cursor:"pointer", padding:"10px 18px", fontSize:13, fontWeight:600, color:reportSubTab===t.key?"#f5d060":"#7a6a30", borderBottom:reportSubTab===t.key?"2px solid #f5d060":"2px solid transparent" }}>{t.label}</div>
         ))}
@@ -322,79 +311,63 @@ function ReportTab({ logs, customers, stock, stockHistory, pureOilProducts }) {
       </>
       )}
 
-      {reportSubTab==="pureoilconsumption" && (
+      {reportSubTab==="customerusage" && (
       <>
       <div style={{ display:"flex", gap:14, marginBottom:20, alignItems:"flex-end", flexWrap:"wrap" }}>
         <div><label>Select Month</label><input type="month" value={reportMonth} onChange={e=>setReportMonth(e.target.value)} style={{ width:200 }} /></div>
         {reportMonth && <button onClick={()=>setReportMonth("")} style={{ cursor:"pointer", background:"transparent", border:"1px solid #c9a84c55", borderRadius:8, color:"#c9a84c", padding:"8px 14px", fontSize:13, fontFamily:"Poppins,sans-serif", fontWeight:600, alignSelf:"flex-end" }}>Show All</button>}
-        <div style={{ marginLeft:"auto", alignSelf:"flex-end", fontSize:13, color:"#7a6a30" }}>{pureOilConsumption.length} entries</div>
+        <div style={{ marginLeft:"auto", alignSelf:"flex-end", fontSize:13, color:"#7a6a30" }}>{customerUsageList.length} customers</div>
       </div>
-      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12, flexWrap:"wrap", gap:8 }}>
-        <div style={{ fontSize:14, fontWeight:700, color:"#f5d060", textTransform:"uppercase", letterSpacing:1 }}>
-          💧 Pure Oil Consumption — {reportMonth ? new Date(reportMonth+"-01").toLocaleString("en",{month:"long",year:"numeric"}) : "All Time"}
-        </div>
-        <button className="btn btn-outline" disabled={pureOilConsumption.length===0} onClick={()=>exportToCSV(
-          `pure_oil_consumption_${reportMonth||"all_time"}.csv`,
-          ["Customer","Pure Oil Product","Qty Used (Ltrs)"],
-          pureOilConsumption.map((r:any)=>[r.customer,r.product,r.qty])
-        )}>⬇ Download CSV</button>
+      <div style={{ fontSize:14, fontWeight:700, color:"#f5d060", marginBottom:14, textTransform:"uppercase", letterSpacing:1 }}>
+        👥 Customer Usage — {reportMonth ? new Date(reportMonth+"-01").toLocaleString("en",{month:"long",year:"numeric"}) : "All Time"}
       </div>
-      <div style={{ background:"#0f0e00", border:"1px solid #3a2e10", borderRadius:14, overflow:"auto" }}>
-        <table style={{ width:"100%", borderCollapse:"collapse" }}>
-          <thead style={{ background:"#0a0800", borderBottom:"1px solid #3a2e10" }}>
-            <tr>{["#","Customer","Pure Oil Product","Qty Used"].map(h=><th key={h} style={{ color:"#c9a84c", fontSize:11, fontWeight:600, letterSpacing:"0.5px", textTransform:"uppercase", padding:"10px 14px", textAlign:"left" }}>{h}</th>)}</tr>
-          </thead>
-          <tbody>
-            {pureOilConsumption.length===0 && <tr><td colSpan={4} style={{ textAlign:"center", padding:40, color:"#5a4a20", fontSize:13 }}>No Pure Oil usage found for this period.</td></tr>}
-            {pureOilConsumption.map((r:any,i:number) => (
-              <tr key={i} style={{ borderBottom:"1px solid #2a2000" }}>
-                <td style={{ padding:"11px 14px", color:"#5a4a20", fontSize:11 }}>{i+1}</td>
-                <td style={{ padding:"11px 14px", fontWeight:600, color:"#f5e6b0", fontSize:13 }}>{r.customer}</td>
-                <td style={{ padding:"11px 14px", color:"#c9a84c", fontSize:13 }}>{r.product}</td>
-                <td style={{ padding:"11px 14px", color:"#f5d060", fontWeight:700, fontSize:13 }}>{r.qty} {r.unit}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      </>
+      {customerUsageList.length===0 && (
+        <div style={{ background:"#0f0e00", border:"1px solid #3a2e10", borderRadius:14, padding:40, textAlign:"center", color:"#5a4a20", fontSize:13 }}>No service log entries found for this period.</div>
       )}
-
-      {reportSubTab==="otherconsumption" && (
-      <>
-      <div style={{ display:"flex", gap:14, marginBottom:20, alignItems:"flex-end", flexWrap:"wrap" }}>
-        <div><label>Select Month</label><input type="month" value={reportMonth} onChange={e=>setReportMonth(e.target.value)} style={{ width:200 }} /></div>
-        {reportMonth && <button onClick={()=>setReportMonth("")} style={{ cursor:"pointer", background:"transparent", border:"1px solid #c9a84c55", borderRadius:8, color:"#c9a84c", padding:"8px 14px", fontSize:13, fontFamily:"Poppins,sans-serif", fontWeight:600, alignSelf:"flex-end" }}>Show All</button>}
-        <div style={{ marginLeft:"auto", alignSelf:"flex-end", fontSize:13, color:"#7a6a30" }}>{otherConsumption.length} entries</div>
-      </div>
-      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12, flexWrap:"wrap", gap:8 }}>
-        <div style={{ fontSize:14, fontWeight:700, color:"#f5d060", textTransform:"uppercase", letterSpacing:1 }}>
-          🔋 Aerosol Refill / Battery / Urinal — Consumption by Customer — {reportMonth ? new Date(reportMonth+"-01").toLocaleString("en",{month:"long",year:"numeric"}) : "All Time"}
-        </div>
-        <button className="btn btn-outline" disabled={otherConsumption.length===0} onClick={()=>exportToCSV(
-          `aerosol_battery_urinal_consumption_${reportMonth||"all_time"}.csv`,
-          ["Customer","Category","Product","Qty Used"],
-          otherConsumption.map((r:any)=>[r.customer,r.category,r.product,`${r.qty} ${r.unit}`])
-        )}>⬇ Download CSV</button>
-      </div>
-      <div style={{ background:"#0f0e00", border:"1px solid #3a2e10", borderRadius:14, overflow:"auto" }}>
-        <table style={{ width:"100%", borderCollapse:"collapse" }}>
-          <thead style={{ background:"#0a0800", borderBottom:"1px solid #3a2e10" }}>
-            <tr>{["#","Customer","Category","Product","Qty Used"].map(h=><th key={h} style={{ color:"#c9a84c", fontSize:11, fontWeight:600, letterSpacing:"0.5px", textTransform:"uppercase", padding:"10px 14px", textAlign:"left" }}>{h}</th>)}</tr>
-          </thead>
-          <tbody>
-            {otherConsumption.length===0 && <tr><td colSpan={5} style={{ textAlign:"center", padding:40, color:"#5a4a20", fontSize:13 }}>No usage found for this period.</td></tr>}
-            {otherConsumption.map((r:any,i:number) => (
-              <tr key={i} style={{ borderBottom:"1px solid #2a2000" }}>
-                <td style={{ padding:"11px 14px", color:"#5a4a20", fontSize:11 }}>{i+1}</td>
-                <td style={{ padding:"11px 14px", fontWeight:600, color:"#f5e6b0", fontSize:13 }}>{r.customer}</td>
-                <td style={{ padding:"11px 14px" }}><span style={{ fontSize:11, background:"#1a1500", color:"#c9a84c", border:"1px solid #3a2e1055", borderRadius:4, padding:"2px 8px" }}>{r.category}</span></td>
-                <td style={{ padding:"11px 14px", color:"#c9a84c", fontSize:13 }}>{r.product}</td>
-                <td style={{ padding:"11px 14px", color:"#f5d060", fontWeight:700, fontSize:13 }}>{r.qty} {r.unit}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+        {customerUsageList.map(([customerName, data]:[string,any]) => {
+          const isOpen = !!expandedCustomers[customerName];
+          return (
+            <div key={customerName} style={{ background:"#0f0e00", border:"1px solid #3a2e10", borderRadius:14, overflow:"hidden" }}>
+              <div onClick={()=>toggleCustomer(customerName)} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"14px 18px", cursor:"pointer" }}>
+                <div>
+                  <span style={{ fontWeight:700, color:"#f5e6b0", fontSize:14 }}>{customerName}</span>
+                  <span style={{ marginLeft:10, fontSize:12, color:"#7a6a30" }}>{data.visits} visit{data.visits!==1?"s":""} · {data.rows.length} item{data.rows.length!==1?"s":""} used</span>
+                </div>
+                <button className="btn btn-outline" style={{ fontSize:12 }} onClick={(e)=>{ e.stopPropagation(); toggleCustomer(customerName); }}>{isOpen ? "▲ Hide Usage" : "▼ Show Usage"}</button>
+              </div>
+              {isOpen && (
+                <div style={{ borderTop:"1px solid #2a2000", padding:"0 18px 14px 18px" }}>
+                  <div style={{ display:"flex", justifyContent:"flex-end", padding:"10px 0 6px" }}>
+                    <button className="btn btn-outline" style={{ fontSize:11 }} disabled={data.rows.length===0} onClick={()=>exportToCSV(
+                      `${customerName.replace(/[^a-z0-9]+/gi,"_")}_usage_${reportMonth||"all_time"}.csv`,
+                      ["Date","Category","Product","Used"],
+                      data.rows.map((r:any)=>[formatDate(r.date),r.category,r.product,`${r.qty} ${r.unit}`])
+                    )}>⬇ Download CSV</button>
+                  </div>
+                  <div style={{ overflow:"auto" }}>
+                    <table style={{ width:"100%", borderCollapse:"collapse" }}>
+                      <thead>
+                        <tr>{["Date","Category","Product","Used"].map(h=><th key={h} style={{ color:"#c9a84c", fontSize:11, fontWeight:600, letterSpacing:"0.5px", textTransform:"uppercase", padding:"8px 10px", textAlign:"left" }}>{h}</th>)}</tr>
+                      </thead>
+                      <tbody>
+                        {data.rows.length===0 && <tr><td colSpan={4} style={{ textAlign:"center", padding:20, color:"#5a4a20", fontSize:12 }}>No products logged for this customer.</td></tr>}
+                        {data.rows.map((r:any,i:number) => (
+                          <tr key={i} style={{ borderBottom:"1px solid #2a2000" }}>
+                            <td style={{ padding:"8px 10px", color:"#d4b96a", fontSize:12, whiteSpace:"nowrap" }}>{formatDate(r.date)}</td>
+                            <td style={{ padding:"8px 10px" }}><span style={{ fontSize:11, background:"#1a1500", color:"#c9a84c", border:"1px solid #3a2e1055", borderRadius:4, padding:"2px 8px" }}>{r.category}</span></td>
+                            <td style={{ padding:"8px 10px", color:"#c9a84c", fontSize:12 }}>{r.product}</td>
+                            <td style={{ padding:"8px 10px", color:"#f5d060", fontWeight:700, fontSize:12 }}>{r.qty} {r.unit}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
       </>
       )}
@@ -416,6 +389,7 @@ export default function App() {
   const [stockHistory, setStockHistory] = useState([]);
   const [pureOilProducts, setPureOilProducts] = useState([]);
   const [productThresholds, setProductThresholds] = useState({}); // "CATEGORY_KEY|Product Name" -> threshold
+  const [technicians, setTechnicians] = useState([]);
 
   // Selected warehouse for stock view / service log / purchase
   const [selectedWarehouse, setSelectedWarehouse] = useState("Al Quoz Warehouse");
@@ -429,6 +403,7 @@ export default function App() {
   const [logWarehouse, setLogWarehouse] = useState("Al Quoz Warehouse");
   const [logProducts, setLogProducts] = useState([{ ...emptyProduct }]);
   const [logNotes, setLogNotes] = useState("");
+  const [logTechnician, setLogTechnician] = useState("");
 
   // Stock/Purchase form
   const [showStockForm, setShowStockForm] = useState(false);
@@ -465,13 +440,14 @@ export default function App() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const [logsRes, stockRes, customersRes, historyRes, oilsRes, thresholdsRes] = await Promise.all([
+      const [logsRes, stockRes, customersRes, historyRes, oilsRes, thresholdsRes, techRes] = await Promise.all([
         supabase.from("logs").select("*").order("created_at", { ascending: false }),
         supabase.from("stock").select("*"),
         supabase.from("customers").select("*"),
         supabase.from("stock_history").select("*").order("created_at", { ascending: false }),
         supabase.from("pure_oils").select("*").order("name", { ascending: true }),
         supabase.from("product_thresholds").select("*"),
+        supabase.from("technicians").select("*").order("name", { ascending: true }),
       ]);
 
       if (logsRes.error) throw logsRes.error;
@@ -479,12 +455,12 @@ export default function App() {
       if (customersRes.error) throw customersRes.error;
       if (historyRes.error) throw historyRes.error;
       if (oilsRes.error) throw oilsRes.error;
-      // thresholdsRes.error ignored — table is optional; if missing, falls back to category defaults
+      // thresholdsRes.error and techRes.error ignored — optional tables, fall back gracefully
 
       const logsData = (logsRes.data || []).map(l => ({
         id: l.id, date: l.date, customer: l.customer, warehouse: l.warehouse || "",
         products: typeof l.products === "string" ? l.products : JSON.stringify(l.products || []),
-        notes: l.notes || "",
+        notes: l.notes || "", technician: l.technician || "",
       }));
 
       // Build nested stock object from rows
@@ -513,12 +489,15 @@ export default function App() {
         thresholdsMap[`${t.category_key}|${t.product_name}`] = Number(t.threshold);
       });
 
+      const techniciansData = (techRes?.data || []).map(t => t.name);
+
       setLogs(logsData);
       setStock(stockObj);
       setCustomers(customersData);
       setStockHistory(historyData);
       setPureOilProducts(oilsData);
       setProductThresholds(thresholdsMap);
+      setTechnicians(techniciansData);
       setLastRefresh(new Date());
       setSyncStatus("synced");
     } catch { setSyncStatus("error"); }
@@ -754,6 +733,7 @@ export default function App() {
   // Submit log
   function submitLog() {
     if (!selectedCustomer || logProducts.length===0) return;
+    if (!logTechnician) { alert("⚠ Please select the Technician Name before saving."); return; }
     const errors = [];
     const allCodesSeen = {}; // code -> productName (first occurrence), to catch cross-row duplicates
     logProducts.forEach(p => {
@@ -788,7 +768,7 @@ export default function App() {
       }
     });
     if (errors.length > 0) { alert("⚠ Cannot Save!\n\n" + [...new Set(errors)].join("\n")); return; }
-    const entry = { id:Date.now(), date:serviceDate, customer:selectedCustomer, warehouse:logWarehouse, products:JSON.stringify(logProducts), notes:logNotes };
+    const entry = { id:Date.now(), date:serviceDate, customer:selectedCustomer, warehouse:logWarehouse, products:JSON.stringify(logProducts), notes:logNotes, technician:logTechnician };
     const updatedStock = JSON.parse(JSON.stringify(stock));
     if (!updatedStock[logWarehouse]) updatedStock[logWarehouse] = {};
     const changedRows = [];
@@ -805,7 +785,7 @@ export default function App() {
       try {
         const { error: logErr } = await supabase.from("logs").insert({
           id: entry.id, date: entry.date, customer: entry.customer, warehouse: entry.warehouse,
-          products: JSON.parse(entry.products), notes: entry.notes || null,
+          products: JSON.parse(entry.products), notes: entry.notes || null, technician: entry.technician || null,
         });
         if (logErr) throw logErr;
         await upsertStockRows(changedRows);
@@ -813,7 +793,7 @@ export default function App() {
       } catch { setSyncStatus("error"); }
       setSaving(false);
     })();
-    setSelectedCustomer(""); setLogProducts([{...emptyProduct}]); setLogNotes(""); setShowLogForm(false);
+    setSelectedCustomer(""); setLogProducts([{...emptyProduct}]); setLogNotes(""); setLogTechnician(""); setShowLogForm(false);
   }
 
   // Submit stock purchase
@@ -1102,10 +1082,10 @@ export default function App() {
               <div className="card" style={{ overflow:"auto" }}>
                 <table style={{ width:"100%", borderCollapse:"collapse", minWidth:700 }}>
                   <thead style={{ background:"#0a0800", borderBottom:"1px solid #3a2e10" }}>
-                    <tr><th>S.No</th><th>Date</th><th>Warehouse</th><th>Customer</th><th>Products Given</th><th>Notes</th></tr>
+                    <tr><th>S.No</th><th>Date</th><th>Warehouse</th><th>Customer</th><th>Technician</th><th>Products Given</th><th>Notes</th></tr>
                   </thead>
                   <tbody>
-                    {paginatedLogs.length===0 && <tr><td colSpan={6} style={{ textAlign:"center", padding:40, color:"#5a4a20" }}>No records found.</td></tr>}
+                    {paginatedLogs.length===0 && <tr><td colSpan={7} style={{ textAlign:"center", padding:40, color:"#5a4a20" }}>No records found.</td></tr>}
                     {paginatedLogs.map((l,i) => {
                       let productList = [];
                       try { productList = JSON.parse(l.products||"[]"); } catch {}
@@ -1117,6 +1097,7 @@ export default function App() {
                           <td style={{ color:"#d4b96a", whiteSpace:"nowrap" }}>{formatDate(l.date)}</td>
                           <td><span className="wh-badge">{l.warehouse||"—"}</span></td>
                           <td style={{ fontWeight:600, color:"#f5e6b0" }}>{l.customer}</td>
+                          <td style={{ color:"#a78bfa", fontSize:12 }}>{l.technician||"—"}</td>
                           <td style={{ fontSize:11 }}>
                             {Object.entries(grouped).map(([catKey,prods]) => {
                               const cat = (CATEGORIES as any)[catKey];
@@ -1126,12 +1107,13 @@ export default function App() {
                                   <span style={{ fontWeight:700, color:"#c9a84c" }}>{cat?.icon} {cat?.label}: </span>
                                   {prodList.map((p:any,pi:number) => (
                                     <span key={pi}>
-                                      <span style={{ color:"#f0e6c0", marginRight:6 }}>{p.productName} × {p.qty} {cat?.unit}</span>
+                                      <span style={{ color:"#f0e6c0", marginRight:4 }}>{p.productName} × {p.qty} {cat?.unit}</span>
                                       {p.machineCodes && p.machineCodes.length > 0 && p.machineCodes.some((c:any)=>c) && (
                                         <span style={{ color:"#7ec8e3", fontSize:10 }}>
                                           [Codes: {p.machineCodes.filter((c:any)=>c).join(", ")}]
                                         </span>
                                       )}
+                                      {pi < prodList.length-1 && <span style={{ color:"#5a4a20", marginRight:6 }}>, </span>}
                                     </span>
                                   ))}
                                 </div>
@@ -1505,6 +1487,7 @@ export default function App() {
                   </div>
                 ))}
               </div>
+              <div><label>Technician Name *</label><select value={logTechnician} onChange={e=>setLogTechnician(e.target.value)}><option value="">Select technician...</option>{technicians.map(t=><option key={t} value={t}>{t}</option>)}</select></div>
               <div><label>Notes (optional)</label><textarea value={logNotes} onChange={e=>setLogNotes(e.target.value)} placeholder="Any notes..." rows={2} style={{ resize:"vertical" }} /></div>
             </div>
             <div style={{ display:"flex", gap:10, marginTop:18, justifyContent:"flex-end" }}>
