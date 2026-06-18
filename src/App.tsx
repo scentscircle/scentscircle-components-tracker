@@ -921,9 +921,9 @@ export default function App() {
     try {
       const targetWarehouses = newProductForm.warehouse === "ALL" ? WAREHOUSES : [newProductForm.warehouse];
       const rows = targetWarehouses.map(wh => ({
-        warehouse: wh, category_key: categoryKey, product_name: productName, qty: 0,
+        warehouse: wh, category_key: categoryKey, product_name: productName, qty: 0, condition: "new",
       }));
-      const { error } = await supabase.from("stock").upsert(rows, { onConflict: "warehouse,category_key,product_name" });
+      const { error } = await supabase.from("stock").upsert(rows, { onConflict: "warehouse,category_key,product_name,condition" });
       if (error) throw error;
       // Update local stock state so it shows immediately
       setStock(prev => {
@@ -936,10 +936,13 @@ export default function App() {
         return updated;
       });
       setSyncStatus("synced");
-    } catch { setSyncStatus("error"); }
+      setNewProductForm({ categoryKey:"BATTERY", productName:"", warehouse:"ALL" });
+      setShowAddProductForm(false);
+    } catch (err) {
+      setSyncStatus("error");
+      alert("⚠ Save Failed!\n\nThe new product could not be added. Please check your connection and try again.\n\n" + (err?.message||""));
+    }
     setSaving(false);
-    setNewProductForm({ categoryKey:"BATTERY", productName:"", warehouse:"ALL" });
-    setShowAddProductForm(false);
   }
 
   // Submit log
