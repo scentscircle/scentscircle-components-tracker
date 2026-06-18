@@ -84,7 +84,7 @@ function exportToCSV(filename, headers, rows) {
   URL.revokeObjectURL(url);
 }
 
-const emptyProduct = { categoryKey:"BATTERY", productName:"AA", qty:"", machineCodes:[] };
+const emptyProduct = { categoryKey:"BATTERY", productName:"AA", qty:"", machineCodes:[], condition:"new" };
 const emptyCustomer = { name:"", location:"", machines:"" };
 
 // Helpers for Opening/Closing Stock Report
@@ -498,6 +498,7 @@ export default function App() {
 
   const [logs, setLogs] = useState([]);
   const [stock, setStock] = useState({});  // { warehouseName: { BATTERY: { AA: 10 } } }
+  const [stockByCondition, setStockByCondition] = useState({}); // { warehouse: { AROMA_DIFFUSER: { Hexascent: {new:5, used:6} } } }
   const [customers, setCustomers] = useState([]);
   const [stockHistory, setStockHistory] = useState([]);
   const [pureOilProducts, setPureOilProducts] = useState([]);
@@ -531,7 +532,8 @@ export default function App() {
   const [transferForm, setTransferForm] = useState({ fromWarehouse:"Al Quoz Warehouse", toWarehouse:"Ajman Warehouse", categoryKey:"BATTERY", productName:"AA", qty:"", date:today() });
 
   const [showReturnForm, setShowReturnForm] = useState(false);
-  const [returnForm, setReturnForm] = useState({ warehouse:"Al Quoz Warehouse", productName:"", qty:"", date:today(), customer:"", notes:"" });
+  const [returnForm, setReturnForm] = useState({ categoryKey:"FINISHED_AROMA_OIL", warehouse:"Al Quoz Warehouse", productName:"", qty:"", date:today(), customer:"", notes:"", machineCodes:[] });
+  const [returnProductSearch, setReturnProductSearch] = useState("");
 
   // Customer form
   const [showCustomerForm, setShowCustomerForm] = useState(false);
@@ -576,12 +578,22 @@ export default function App() {
         notes: l.notes || "", technician: l.technician || "",
       }));
 
-      // Build nested stock object from rows
+      // Build nested stock object from rows (combined total, ignoring condition —
+      // kept for backward compatibility with existing Stock tab / low-stock logic)
       const stockObj = {};
+      // Separate structure tracking New vs Used split, only meaningful for
+      // AROMA_DIFFUSER / AEROSOL_DISPENSER
+      const stockByConditionObj = {};
       (stockRes.data || []).forEach(r => {
+        const cond = r.condition || "new";
         if (!stockObj[r.warehouse]) stockObj[r.warehouse] = {};
         if (!stockObj[r.warehouse][r.category_key]) stockObj[r.warehouse][r.category_key] = {};
-        stockObj[r.warehouse][r.category_key][r.product_name] = Number(r.qty) || 0;
+        stockObj[r.warehouse][r.category_key][r.product_name] = (Number(stockObj[r.warehouse][r.category_key][r.product_name])||0) + (Number(r.qty) || 0);
+
+        if (!stockByConditionObj[r.warehouse]) stockByConditionObj[r.warehouse] = {};
+        if (!stockByConditionObj[r.warehouse][r.category_key]) stockByConditionObj[r.warehouse][r.category_key] = {};
+        if (!stockByConditionObj[r.warehouse][r.category_key][r.product_name]) stockByConditionObj[r.warehouse][r.category_key][r.product_name] = { new:0, used:0 };
+        stockByConditionObj[r.warehouse][r.category_key][r.product_name][cond] = Number(r.qty) || 0;
       });
 
       const customersData = (customersRes.data || []).map(c => ({
@@ -606,6 +618,7 @@ export default function App() {
 
       setLogs(logsData);
       setStock(stockObj);
+      setStockByCondition(stockByConditionObj);
       setCustomers(customersData);
       setStockHistory(historyData);
       setPureOilProducts(oilsData);
@@ -631,12 +644,13 @@ export default function App() {
   // Atomic delta-based stock adjustment via Postgres RPC — avoids race conditions /
   // stale-state bugs since the +/- happens inside the database, not computed in JS
   // from a possibly-outdated copy of `stock`. Returns the new authoritative qty.
-  // rows: [{ warehouse, categoryKey, productName, delta }]  (delta can be + or -)
+  // rows: [{ warehouse, categoryKey, productName, delta, condition? }]  (delta can be + or -)
   async function adjustStockAtomic(rows) {
     const results = [];
     for (const r of rows) {
       const { data, error } = await supabase.rpc("adjust_stock", {
         p_warehouse: r.warehouse, p_category_key: r.categoryKey, p_product_name: r.productName, p_delta: r.delta,
+        p_condition: r.condition || "new",
       });
       if (error) throw error;
       results.push({ ...r, newQty: Number(data) });
@@ -656,6 +670,15 @@ export default function App() {
     const override = productThresholds[`${categoryKey}|${productName}`];
     if (override !== undefined) return override;
     return CATEGORIES[categoryKey]?.lowThreshold ?? 0;
+  }
+
+  // Categories that track New vs Used stock separately
+  const NEW_USED_CATEGORIES = ["AROMA_DIFFUSER", "AEROSOL_DISPENSER"];
+
+  function getConditionQty(categoryKey, productName, warehouse, condition) {
+    const wh = warehouse || stockFilterWarehouse;
+    const raw = Number(stockByCondition[wh]?.[categoryKey]?.[productName]?.[condition]) || 0;
+    return Math.round(raw*100)/100;
   }
 
   function getProductsForCategory(categoryKey) {
@@ -793,6 +816,7 @@ export default function App() {
         const prods = val==="FINISHED_AROMA_OIL" ? getFinishedAromaOilProducts(logWarehouse) : getAllProducts(val);
         updated.productName = prods[0]||"";
         updated.machineCodes = [];
+        updated.condition = "new";
       }
       if (field==="productName") updated.machineCodes = [];
       if (field==="qty") {
@@ -866,10 +890,12 @@ export default function App() {
     const errors = [];
     const allCodesSeen = {}; // code -> productName (first occurrence), to catch cross-row duplicates
     logProducts.forEach(p => {
-      const available = getStockQty(p.categoryKey, p.productName, logWarehouse);
+      const isNewUsed = NEW_USED_CATEGORIES.includes(p.categoryKey);
+      const available = isNewUsed ? getConditionQty(p.categoryKey, p.productName, logWarehouse, p.condition||"new") : getStockQty(p.categoryKey, p.productName, logWarehouse);
       if (Number(p.qty) > available) {
         const cat = CATEGORIES[p.categoryKey];
-        errors.push(`${p.productName}: Need ${p.qty} ${cat?.unit} but only ${available} ${cat?.unit} available in ${logWarehouse}`);
+        const condLabel = isNewUsed ? ` (${p.condition==="used"?"Used":"New"})` : "";
+        errors.push(`${p.productName}${condLabel}: Need ${p.qty} ${cat?.unit} but only ${available} ${cat?.unit} available in ${logWarehouse}`);
       }
       // Validate machine codes — mandatory and must be exactly 9 chars
       if (needsMachineCode(p.categoryKey, p.productName) && Number(p.qty) > 0) {
@@ -910,16 +936,36 @@ export default function App() {
         // Atomic, authoritative stock decrement — done in the DB, not from local state
         const deltaRows = logProducts.map(p => ({
           warehouse: logWarehouse, categoryKey: p.categoryKey, productName: p.productName, delta: -Number(p.qty||0),
+          condition: NEW_USED_CATEGORIES.includes(p.categoryKey) ? (p.condition||"new") : "new",
         }));
         const results = await adjustStockAtomic(deltaRows);
 
-        // Sync local state with the authoritative values returned by the database
+        // Sync local state with the authoritative values returned by the database.
+        // For New/Used categories, update the per-condition store, then recompute
+        // the combined total (new+used) for the general `stock` view.
+        setStockByCondition(prev => {
+          const updated = JSON.parse(JSON.stringify(prev));
+          if (!updated[logWarehouse]) updated[logWarehouse] = {};
+          results.forEach(r => {
+            if (!updated[logWarehouse][r.categoryKey]) updated[logWarehouse][r.categoryKey] = {};
+            if (!updated[logWarehouse][r.categoryKey][r.productName]) updated[logWarehouse][r.categoryKey][r.productName] = { new:0, used:0 };
+            updated[logWarehouse][r.categoryKey][r.productName][r.condition] = r.newQty;
+          });
+          return updated;
+        });
         setStock(prev => {
           const updated = JSON.parse(JSON.stringify(prev));
           if (!updated[logWarehouse]) updated[logWarehouse] = {};
           results.forEach(r => {
             if (!updated[logWarehouse][r.categoryKey]) updated[logWarehouse][r.categoryKey] = {};
-            updated[logWarehouse][r.categoryKey][r.productName] = r.newQty;
+            if (NEW_USED_CATEGORIES.includes(r.categoryKey)) {
+              // Recompute combined total from both conditions
+              const newCond = r.condition === "new" ? r.newQty : (stockByCondition[logWarehouse]?.[r.categoryKey]?.[r.productName]?.new || 0);
+              const usedCond = r.condition === "used" ? r.newQty : (stockByCondition[logWarehouse]?.[r.categoryKey]?.[r.productName]?.used || 0);
+              updated[logWarehouse][r.categoryKey][r.productName] = newCond + usedCond;
+            } else {
+              updated[logWarehouse][r.categoryKey][r.productName] = r.newQty;
+            }
           });
           return updated;
         });
@@ -1021,35 +1067,71 @@ export default function App() {
 
   // Returns — finished/mixed aroma oil returned from service, added to FINISHED_AROMA_OIL stock
   function submitReturn() {
-    if (!returnForm.productName) { alert("Please select or add a Finished Aroma Oil product first."); return; }
+    if (!returnForm.productName) { alert("Please select or add a product first."); return; }
     if (!returnForm.qty || Number(returnForm.qty)<=0) return;
     const wh = returnForm.warehouse;
-    const catKey = "FINISHED_AROMA_OIL";
+    const catKey = returnForm.categoryKey;
     const prod = returnForm.productName;
     const qty = Number(returnForm.qty);
+    const isNewUsed = NEW_USED_CATEGORIES.includes(catKey);
+    // Anything returned from a customer is, by definition, no longer "new" —
+    // it always goes back into Used stock for these hardware categories.
+    const condition = isNewUsed ? "used" : "new";
+    if (isNewUsed) {
+      const codes = returnForm.machineCodes || [];
+      const relevant = Array.from({length: parseInt(qty)||0}, (_,ci) => (codes[ci]||"").trim());
+      const invalid = relevant.filter(c => !c || c.length !== 9).length;
+      if (invalid > 0) { alert(`⚠ Please enter all machine codes (exactly 9 characters each) for the returned ${prod}.`); return; }
+      const seen = {};
+      for (const c of relevant) {
+        if (seen[c]) { alert(`⚠ Duplicate machine code "${c}" entered more than once.`); return; }
+        seen[c] = true;
+      }
+    }
     setSyncStatus("saving"); setSaving(true);
     (async () => {
       try {
-        const [result] = await adjustStockAtomic([{ warehouse:wh, categoryKey:catKey, productName:prod, delta:qty }]);
-        const returnEntry = { id:Date.now(), date:returnForm.date, warehouse:wh, category:CATEGORIES[catKey]?.label||catKey, item:prod, vendor:returnForm.customer||"", stockInHand:result.newQty-qty, received:qty, closing:result.newQty, unit:CATEGORIES[catKey]?.unit||"Ltrs", type:"return" };
+        const [result] = await adjustStockAtomic([{ warehouse:wh, categoryKey:catKey, productName:prod, delta:qty, condition }]);
+        const returnEntry = { id:Date.now(), date:returnForm.date, warehouse:wh, category:CATEGORIES[catKey]?.label||catKey, item:prod, vendor:returnForm.customer||"", stockInHand:result.newQty-qty, received:qty, closing:result.newQty, unit:CATEGORIES[catKey]?.unit||"Ltrs", type:"return", condition, machineCodes:isNewUsed?returnForm.machineCodes:undefined };
         const { error } = await supabase.from("stock_history").insert({
           id: returnEntry.id, date: returnEntry.date, warehouse: returnEntry.warehouse,
           category: returnEntry.category, item: returnEntry.item, vendor: returnEntry.vendor || null,
           stock_in_hand: returnEntry.stockInHand, received: returnEntry.received, closing: returnEntry.closing,
-          unit: returnEntry.unit, type: returnEntry.type,
+          unit: returnEntry.unit, type: returnEntry.type, condition: returnEntry.condition,
+          machine_codes: isNewUsed ? returnForm.machineCodes : null,
         });
         if (error) throw error;
-        setStock(prev => {
-          const updated = JSON.parse(JSON.stringify(prev));
-          if (!updated[wh]) updated[wh] = {};
-          if (!updated[wh][catKey]) updated[wh][catKey] = {};
-          updated[wh][catKey][prod] = result.newQty;
-          return updated;
-        });
+        if (isNewUsed) {
+          setStockByCondition(prev => {
+            const updated = JSON.parse(JSON.stringify(prev));
+            if (!updated[wh]) updated[wh] = {};
+            if (!updated[wh][catKey]) updated[wh][catKey] = {};
+            if (!updated[wh][catKey][prod]) updated[wh][catKey][prod] = { new:0, used:0 };
+            updated[wh][catKey][prod][condition] = result.newQty;
+            return updated;
+          });
+          setStock(prev => {
+            const updated = JSON.parse(JSON.stringify(prev));
+            if (!updated[wh]) updated[wh] = {};
+            if (!updated[wh][catKey]) updated[wh][catKey] = {};
+            const newQty = stockByCondition[wh]?.[catKey]?.[prod]?.new || 0;
+            updated[wh][catKey][prod] = newQty + result.newQty;
+            return updated;
+          });
+        } else {
+          setStock(prev => {
+            const updated = JSON.parse(JSON.stringify(prev));
+            if (!updated[wh]) updated[wh] = {};
+            if (!updated[wh][catKey]) updated[wh][catKey] = {};
+            updated[wh][catKey][prod] = result.newQty;
+            return updated;
+          });
+        }
         setStockHistory(h => [returnEntry, ...h]);
         setSyncStatus("synced");
         setShowReturnForm(false);
-        setReturnForm({ warehouse:"Al Quoz Warehouse", productName:"", qty:"", date:today(), customer:"", notes:"" });
+        setReturnForm({ categoryKey:"FINISHED_AROMA_OIL", warehouse:"Al Quoz Warehouse", productName:"", qty:"", date:today(), customer:"", notes:"", machineCodes:[] });
+        setReturnProductSearch("");
       } catch (err) {
         setSyncStatus("error");
         alert("⚠ Return Save Failed!\n\nPlease check your connection and try again.\n\n" + (err?.message||""));
@@ -1256,7 +1338,7 @@ export default function App() {
                                   <span style={{ fontWeight:700, color:"#c9a84c" }}>{cat?.icon} {cat?.label}: </span>
                                   {prodList.map((p:any,pi:number) => (
                                     <span key={pi}>
-                                      <span style={{ color:"#f0e6c0", marginRight:4 }}>{p.productName} × {p.qty} {cat?.unit}</span>
+                                      <span style={{ color:"#f0e6c0", marginRight:4 }}>{p.productName}{p.condition && (p.categoryKey==="AROMA_DIFFUSER"||p.categoryKey==="AEROSOL_DISPENSER") && <span style={{ color:p.condition==="used"?"#a78bfa":"#4ade80", fontSize:10 }}> [{p.condition==="used"?"Used":"New"}]</span>} × {p.qty} {cat?.unit}</span>
                                       {p.machineCodes && p.machineCodes.length > 0 && p.machineCodes.some((c:any)=>c) && (
                                         <span style={{ color:"#7ec8e3", fontSize:10 }}>
                                           [Codes: {p.machineCodes.filter((c:any)=>c).join(", ")}]
@@ -1353,8 +1435,28 @@ export default function App() {
                         <div className="stock-box-inner">
                           {products.length===0 && <div style={{ color:"#5a4a20", fontSize:12 }}>No items. {catKey==="PURE_OIL"&&"Click '+ Add Product' to add."}</div>}
                           {products.map(p => {
+                            const isNewUsed = NEW_USED_CATEGORIES.includes(catKey);
                             const qty = getStockQty(catKey, p, stockFilterWarehouse);
                             const low = qty < getLowThreshold(catKey, p);
+                            if (isNewUsed) {
+                              const newQty = getConditionQty(catKey, p, stockFilterWarehouse, "new");
+                              const usedQty = getConditionQty(catKey, p, stockFilterWarehouse, "used");
+                              return (
+                                <div key={p} style={{ padding:"6px 0", borderBottom:"1px solid #2a2000" }}>
+                                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                                    <span style={{ color:"#f0e6c0", fontSize:12 }}>{p}</span>
+                                    <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                                      <span style={{ fontSize:13, fontWeight:700, color:low?"#ef4444":"#86efac" }}>{qty} {cat.unit}</span>
+                                      {low && <span className="pulse" style={{ fontSize:9, background:"#2d0f0f", color:"#f87171", border:"1px solid #ef444440", borderRadius:20, padding:"1px 6px", fontWeight:700 }}>LOW</span>}
+                                    </div>
+                                  </div>
+                                  <div style={{ display:"flex", gap:10, marginTop:2 }}>
+                                    <span style={{ fontSize:10, color:"#4ade80" }}>🆕 New: {newQty}</span>
+                                    <span style={{ fontSize:10, color:"#a78bfa" }}>♻️ Used: {usedQty}</span>
+                                  </div>
+                                </div>
+                              );
+                            }
                             return (
                               <div key={p} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"6px 0", borderBottom:"1px solid #2a2000" }}>
                                 <span style={{ color:"#f0e6c0", fontSize:12 }}>{p}</span>
@@ -1585,7 +1687,7 @@ export default function App() {
                       <span style={{ fontSize:11, color:"#c9a84c", fontWeight:700 }}>PRODUCT {i+1}</span>
                       {logProducts.length>1 && <button className="btn btn-danger" onClick={()=>removeLogProduct(i)}>✕ Remove</button>}
                     </div>
-                    <div style={{ display:"grid", gridTemplateColumns:"150px 1fr 80px", gap:8 }}>
+                    <div style={{ display:"grid", gridTemplateColumns: NEW_USED_CATEGORIES.includes(p.categoryKey) ? "150px 1fr 110px 80px" : "150px 1fr 80px", gap:8 }}>
                       <div>
                         <label>Category</label>
                         <select value={p.categoryKey} onChange={e=>updateLogProduct(i,"categoryKey",e.target.value)}>
@@ -1602,12 +1704,21 @@ export default function App() {
                           <input value={p.productName} onChange={e=>updateLogProduct(i,"productName",e.target.value)} placeholder="Enter product name" />
                         ); })()}
                       </div>
+                      {NEW_USED_CATEGORIES.includes(p.categoryKey) && (
+                        <div>
+                          <label>Condition</label>
+                          <select value={p.condition||"new"} onChange={e=>updateLogProduct(i,"condition",e.target.value)}>
+                            <option value="new">🆕 New</option>
+                            <option value="used">♻️ Used</option>
+                          </select>
+                        </div>
+                      )}
                       <div>
                         <label>Qty</label>
                         <input type="number" min="0" step="0.01" value={p.qty} onChange={e=>updateLogProduct(i,"qty",e.target.value)}
-                          style={{ borderColor:Number(p.qty)>getStockQty(p.categoryKey,p.productName,logWarehouse)?"#ef4444":"#3a2e10" }} />
-                        <div style={{ fontSize:9, marginTop:2, color:Number(p.qty)>getStockQty(p.categoryKey,p.productName,logWarehouse)?"#ef4444":"#7a6a30" }}>
-                          Avail: {getStockQty(p.categoryKey,p.productName,logWarehouse)} {SERVICE_PRODUCT_TYPES.find(t=>t.key===p.categoryKey)?.unit}
+                          style={{ borderColor:Number(p.qty)>(NEW_USED_CATEGORIES.includes(p.categoryKey)?getConditionQty(p.categoryKey,p.productName,logWarehouse,p.condition||"new"):getStockQty(p.categoryKey,p.productName,logWarehouse))?"#ef4444":"#3a2e10" }} />
+                        <div style={{ fontSize:9, marginTop:2, color:Number(p.qty)>(NEW_USED_CATEGORIES.includes(p.categoryKey)?getConditionQty(p.categoryKey,p.productName,logWarehouse,p.condition||"new"):getStockQty(p.categoryKey,p.productName,logWarehouse))?"#ef4444":"#7a6a30" }}>
+                          Avail: {NEW_USED_CATEGORIES.includes(p.categoryKey)?getConditionQty(p.categoryKey,p.productName,logWarehouse,p.condition||"new"):getStockQty(p.categoryKey,p.productName,logWarehouse)} {SERVICE_PRODUCT_TYPES.find(t=>t.key===p.categoryKey)?.unit}
                         </div>
                       </div>
                     </div>
@@ -1674,35 +1785,77 @@ export default function App() {
         </div>
       )}
 
-      {/* RETURN FINISHED AROMA OIL MODAL */}
+      {/* RETURN ITEMS MODAL */}
       {showReturnForm && (
         <div onClick={()=>setShowReturnForm(false)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:100, backdropFilter:"blur(4px)" }}>
           <div className="card slide-in" onClick={e=>e.stopPropagation()} style={{ width:"100%", maxWidth:500, margin:16, padding:24, background:"#0a0800", border:"1px solid #c9a84c" }}>
-            <div style={{ fontWeight:700, fontSize:17, marginBottom:18, color:"#f5d060" }}>♻️ Return Finished Aroma Oil</div>
+            <div style={{ fontWeight:700, fontSize:17, marginBottom:18, color:"#f5d060" }}>♻️ Return Item to Stock</div>
             <div style={{ display:"grid", gap:12 }}>
-              <div><label>Warehouse</label><select value={returnForm.warehouse} onChange={e=>{ const wh=e.target.value; const prods=getFinishedAromaOilProducts(wh); setReturnForm(f=>({...f,warehouse:wh,productName:prods.includes(f.productName)?f.productName:""})); }}>{WAREHOUSES.map(w=><option key={w} value={w}>{w}</option>)}</select></div>
               <div>
-                <label>Finished Aroma Oil Product</label>
-                {(()=>{ const prods=getFinishedAromaOilProducts(returnForm.warehouse); return prods.length>0?(
-                  <select value={returnForm.productName} onChange={e=>setReturnForm(f=>({...f,productName:e.target.value}))}>
-                    <option value="">Select product...</option>
-                    {prods.map(p=><option key={p} value={p}>{p}</option>)}
-                  </select>
+                <label>Category</label>
+                <select value={returnForm.categoryKey} onChange={e=>{ const cat=e.target.value; setReturnForm(f=>({...f, categoryKey:cat, productName:"", machineCodes:[]})); setReturnProductSearch(""); }}>
+                  <option value="FINISHED_AROMA_OIL">🧴 Finished Aroma Oil</option>
+                  <option value="AROMA_DIFFUSER">💨 Aroma Diffuser</option>
+                  <option value="AEROSOL_DISPENSER">🌀 Aerosol Dispenser</option>
+                </select>
+              </div>
+              <div><label>Warehouse</label><select value={returnForm.warehouse} onChange={e=>{ const wh=e.target.value; const prods = returnForm.categoryKey==="FINISHED_AROMA_OIL" ? getFinishedAromaOilProducts(wh) : getAllProducts(returnForm.categoryKey); setReturnForm(f=>({...f,warehouse:wh,productName:prods.includes(f.productName)?f.productName:""})); setReturnProductSearch(""); }}>{WAREHOUSES.map(w=><option key={w} value={w}>{w}</option>)}</select></div>
+              <div>
+                <label>{CATEGORIES[returnForm.categoryKey]?.label || "Product"}</label>
+                {(()=>{ const prods = returnForm.categoryKey==="FINISHED_AROMA_OIL" ? getFinishedAromaOilProducts(returnForm.warehouse) : getAllProducts(returnForm.categoryKey); return prods.length>0?(
+                  <div style={{ position:"relative" }}>
+                    <input
+                      placeholder="🔍 Type to search products..."
+                      value={returnForm.productName ? returnForm.productName : returnProductSearch}
+                      onFocus={()=>{ if(returnForm.productName){ setReturnProductSearch(""); setReturnForm(f=>({...f,productName:""})); } }}
+                      onChange={e=>{ setReturnProductSearch(e.target.value); setReturnForm(f=>({...f,productName:""})); }}
+                    />
+                    {!returnForm.productName && (
+                      <div style={{ position:"absolute", top:"110%", left:0, right:0, background:"#1a1500", border:"1px solid #c9a84c", borderRadius:8, maxHeight:200, overflowY:"auto", zIndex:50 }}>
+                        {prods.filter(p=>p.toLowerCase().includes(returnProductSearch.toLowerCase())).slice(0,30).map(p=>(
+                          <div key={p} onClick={()=>{ setReturnForm(f=>({...f,productName:p,machineCodes:[]})); setReturnProductSearch(""); }}
+                            style={{ padding:"8px 12px", cursor:"pointer", fontSize:12, color:"#f0e6c0", borderBottom:"1px solid #2a2000" }}
+                            onMouseEnter={e=>e.currentTarget.style.background="#2a1a00"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>{p}</div>
+                        ))}
+                        {prods.filter(p=>p.toLowerCase().includes(returnProductSearch.toLowerCase())).length===0 && (
+                          <div style={{ padding:"8px 12px", fontSize:12, color:"#5a4a20" }}>No matches found.</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 ):(
                   <div style={{ fontSize:12, color:"#f87171", background:"#2d1515", border:"1px solid #f8717140", borderRadius:8, padding:"10px 14px" }}>
-                    No Finished Aroma Oil products yet. Go to <strong>Stock → + Add Product</strong>, choose category <strong>"Finished Aroma Oil"</strong>, and add a name (e.g. "Anantara Mix") first.
+                    No products in this category yet. Go to <strong>Stock → + Add Product</strong> to add one first.
                   </div>
                 ); })()}
               </div>
+              {NEW_USED_CATEGORIES.includes(returnForm.categoryKey) && returnForm.productName && (
+                <div style={{ background:"#1a1500", border:"1px solid #a78bfa40", borderRadius:8, padding:"8px 12px", fontSize:11, color:"#a78bfa" }}>
+                  ♻️ Returned items are always added to <strong>Used</strong> stock — once given to a customer, it can't go back to New.
+                </div>
+              )}
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
-                <div><label>Quantity Returned (Ltrs)</label><input type="number" min="0" step="0.01" value={returnForm.qty} onChange={e=>setReturnForm(f=>({...f,qty:e.target.value}))} placeholder="0" /></div>
+                <div><label>Quantity Returned {CATEGORIES[returnForm.categoryKey]?.unit && `(${CATEGORIES[returnForm.categoryKey].unit})`}</label><input type="number" min="0" step="0.01" value={returnForm.qty} onChange={e=>{ const val=e.target.value; setReturnForm(f=>{ const num=parseInt(val)||0; const isNewUsed=NEW_USED_CATEGORIES.includes(f.categoryKey); const codes = isNewUsed ? Array.from({length:num},(_,i)=>f.machineCodes?.[i]||"") : f.machineCodes; return {...f,qty:val,machineCodes:codes}; }); }} placeholder="0" /></div>
                 <div><label>Return Date</label><input type="date" value={returnForm.date} onChange={e=>setReturnForm(f=>({...f,date:e.target.value}))} /></div>
               </div>
               <div><label>Returned By / Customer Ref (optional)</label><input value={returnForm.customer} onChange={e=>setReturnForm(f=>({...f,customer:e.target.value}))} placeholder="e.g. Technician name or client name" /></div>
+              {NEW_USED_CATEGORIES.includes(returnForm.categoryKey) && Number(returnForm.qty)>0 && (
+                <div style={{ background:"#0a0800", border:"1px solid #3a2e10", borderRadius:8, padding:"10px 12px" }}>
+                  <div style={{ fontSize:10, color:"#c9a84c", fontWeight:700, marginBottom:6, textTransform:"uppercase" }}>🔧 Machine Codes ({returnForm.productName}) — 9 characters required</div>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:6 }}>
+                    {Array.from({length: parseInt(returnForm.qty)||0}).map((_,ci) => (
+                      <input key={ci} value={returnForm.machineCodes?.[ci]||""} maxLength={9}
+                        onChange={e=>{ const codes=[...(returnForm.machineCodes||[])]; codes[ci]=e.target.value; setReturnForm(f=>({...f,machineCodes:codes})); }}
+                        placeholder={`Code #${ci+1}`}
+                        style={{ borderColor:(returnForm.machineCodes?.[ci]||"").length===9?"#3a2e10":"#ef4444" }} />
+                    ))}
+                  </div>
+                </div>
+              )}
               {returnForm.productName && (
                 <div style={{ background:"#1a1500", border:"1px solid #3a2e10", borderRadius:8, padding:"10px 14px", fontSize:12, color:"#c9a84c" }}>
-                  {returnForm.warehouse} — Current: <strong style={{ color:"#f5d060" }}>{getStockQty("FINISHED_AROMA_OIL",returnForm.productName,returnForm.warehouse)} Ltrs</strong>
-                  {" → "}After: <strong style={{ color:"#4ade80" }}>{getStockQty("FINISHED_AROMA_OIL",returnForm.productName,returnForm.warehouse)+Number(returnForm.qty||0)} Ltrs</strong>
+                  {returnForm.warehouse} — Current {NEW_USED_CATEGORIES.includes(returnForm.categoryKey)?"Used":""}: <strong style={{ color:"#f5d060" }}>{NEW_USED_CATEGORIES.includes(returnForm.categoryKey)?getConditionQty(returnForm.categoryKey,returnForm.productName,returnForm.warehouse,"used"):getStockQty(returnForm.categoryKey,returnForm.productName,returnForm.warehouse)} {CATEGORIES[returnForm.categoryKey]?.unit}</strong>
+                  {" → "}After: <strong style={{ color:"#4ade80" }}>{(NEW_USED_CATEGORIES.includes(returnForm.categoryKey)?getConditionQty(returnForm.categoryKey,returnForm.productName,returnForm.warehouse,"used"):getStockQty(returnForm.categoryKey,returnForm.productName,returnForm.warehouse))+Number(returnForm.qty||0)} {CATEGORIES[returnForm.categoryKey]?.unit}</strong>
                 </div>
               )}
             </div>
