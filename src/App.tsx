@@ -534,6 +534,7 @@ export default function App() {
   const [showReturnForm, setShowReturnForm] = useState(false);
   const [returnForm, setReturnForm] = useState({ categoryKey:"FINISHED_AROMA_OIL", warehouse:"Al Quoz Warehouse", productName:"", qty:"", date:today(), customer:"", notes:"", machineCodes:[] });
   const [returnProductSearch, setReturnProductSearch] = useState("");
+  const [stockProductSearch, setStockProductSearch] = useState("");
 
   // Customer form
   const [showCustomerForm, setShowCustomerForm] = useState(false);
@@ -1110,6 +1111,7 @@ export default function App() {
         setStockHistory(h => [{ ...historyEntry, stockInHand: result.newQty - addQty, closing: result.newQty }, ...h]);
         setSyncStatus("synced");
         setStockForm({ categoryKey:"BATTERY", productName:"AA", qty:"", dateReceived:today(), vendor:"", warehouse:"Al Quoz Warehouse", condition:"new" });
+        setStockProductSearch("");
         setShowStockForm(false);
       } catch (err) {
         setSyncStatus("error");
@@ -1899,9 +1901,35 @@ export default function App() {
           <div className="card slide-in" onClick={e=>e.stopPropagation()} style={{ width:"100%", maxWidth:500, margin:16, padding:24, background:"#0a0800", border:"1px solid #c9a84c" }}>
             <div style={{ fontWeight:700, fontSize:17, marginBottom:18, color:"#f5d060" }}>📦 Add Stock Purchase</div>
             <div style={{ display:"grid", gap:12 }}>
-              <div><label>Warehouse</label><select value={stockForm.warehouse} onChange={e=>setStockForm(f=>({...f,warehouse:e.target.value}))}>{WAREHOUSES.map(w=><option key={w} value={w}>{w}</option>)}</select></div>
-              <div><label>Category</label><select value={stockForm.categoryKey} onChange={e=>{ const newCat=e.target.value; const prods=newCat==="FINISHED_AROMA_OIL"?getFinishedAromaOilProducts(stockForm.warehouse):getAllProducts(newCat); setStockForm(f=>({...f,categoryKey:newCat,productName:prods[0]||"",condition:"new"})); }}>{Object.entries(CATEGORIES).map(([k,c])=><option key={k} value={k}>{c.icon} {c.label}</option>)}</select></div>
-              <div><label>Product</label>{(()=>{ const prods=stockForm.categoryKey==="FINISHED_AROMA_OIL"?getFinishedAromaOilProducts(stockForm.warehouse):getAllProducts(stockForm.categoryKey); return prods.length>0?<select value={stockForm.productName} onChange={e=>setStockForm(f=>({...f,productName:e.target.value}))}>{prods.map(p=><option key={p} value={p}>{p}</option>)}</select>:<input value={stockForm.productName} onChange={e=>setStockForm(f=>({...f,productName:e.target.value}))} placeholder="Enter product name" />; })()}</div>
+              <div><label>Warehouse</label><select value={stockForm.warehouse} onChange={e=>{ setStockForm(f=>({...f,warehouse:e.target.value,productName:""})); setStockProductSearch(""); }}>{WAREHOUSES.map(w=><option key={w} value={w}>{w}</option>)}</select></div>
+              <div><label>Category</label><select value={stockForm.categoryKey} onChange={e=>{ const newCat=e.target.value; const prods=newCat==="FINISHED_AROMA_OIL"?getFinishedAromaOilProducts(stockForm.warehouse):getAllProducts(newCat); setStockForm(f=>({...f,categoryKey:newCat,productName:prods[0]||"",condition:"new"})); setStockProductSearch(""); }}>{Object.entries(CATEGORIES).map(([k,c])=><option key={k} value={k}>{c.icon} {c.label}</option>)}</select></div>
+              <div>
+                <label>Product</label>
+                {(()=>{ const prods=stockForm.categoryKey==="FINISHED_AROMA_OIL"?getFinishedAromaOilProducts(stockForm.warehouse):getAllProducts(stockForm.categoryKey); return prods.length>0?(
+                  <div style={{ position:"relative" }}>
+                    <input
+                      placeholder="🔍 Type to search products..."
+                      value={stockForm.productName ? stockForm.productName : stockProductSearch}
+                      onFocus={()=>{ if(stockForm.productName){ setStockProductSearch(""); setStockForm(f=>({...f,productName:""})); } }}
+                      onChange={e=>{ setStockProductSearch(e.target.value); setStockForm(f=>({...f,productName:""})); }}
+                    />
+                    {!stockForm.productName && (
+                      <div style={{ position:"absolute", top:"110%", left:0, right:0, background:"#1a1500", border:"1px solid #c9a84c", borderRadius:8, maxHeight:200, overflowY:"auto", zIndex:50 }}>
+                        {prods.filter(p=>p.toLowerCase().includes(stockProductSearch.toLowerCase())).slice(0,30).map(p=>(
+                          <div key={p} onClick={()=>{ setStockForm(f=>({...f,productName:p})); setStockProductSearch(""); }}
+                            style={{ padding:"8px 12px", cursor:"pointer", fontSize:12, color:"#f0e6c0", borderBottom:"1px solid #2a2000" }}
+                            onMouseEnter={e=>e.currentTarget.style.background="#2a1a00"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>{p}</div>
+                        ))}
+                        {prods.filter(p=>p.toLowerCase().includes(stockProductSearch.toLowerCase())).length===0 && (
+                          <div style={{ padding:"8px 12px", fontSize:12, color:"#5a4a20" }}>No matches found.</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ):(
+                  <input value={stockForm.productName} onChange={e=>setStockForm(f=>({...f,productName:e.target.value}))} placeholder="Enter product name" />
+                ); })()}
+              </div>
               {NEW_USED_CATEGORIES.includes(stockForm.categoryKey) && (
                 <div>
                   <label>Condition</label>
