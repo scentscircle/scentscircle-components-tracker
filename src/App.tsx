@@ -681,6 +681,42 @@ export default function App() {
     return Math.round(raw*100)/100;
   }
 
+  // Status of every machine code ever recorded, based on its MOST RECENT event
+  // (Service Log = given to a customer, Return = came back to warehouse). A code
+  // represents one permanent physical unit, so it's perfectly fine for the same
+  // code to be given out, returned, then given out again later — we only flag it
+  // as a conflict if it's currently "out with a customer" (last event = Service Log)
+  // and someone tries to give it out again before it's been returned.
+  const machineCodeStatus = useMemo(() => {
+    const events = []; // { code, date, type: 'given'|'returned', product, who }
+    logs.forEach(l => {
+      let prods = [];
+      try { prods = JSON.parse(l.products||"[]"); } catch {}
+      prods.forEach(p => {
+        (p.machineCodes||[]).forEach(c => {
+          const code = (c||"").trim();
+          if (code) events.push({ code, date:l.date, ts:l.id||0, type:"given", product:p.productName, who:l.customer });
+        });
+      });
+    });
+    stockHistory.forEach(h => {
+      (h.machineCodes||[]).forEach(c => {
+        const code = (c||"").trim();
+        if (code) events.push({ code, date:h.date, ts:h.id||0, type:"returned", product:h.item, who:h.vendor });
+      });
+    });
+    // Sort by date then by id/timestamp so we can find the latest event per code
+    events.sort((a,b) => {
+      const d = String(a.date).localeCompare(String(b.date));
+      if (d !== 0) return d;
+      return (a.ts||0) - (b.ts||0);
+    });
+    const latestByCode = {};
+    events.forEach(e => { latestByCode[e.code] = e; });
+    return latestByCode; // code -> latest event ('given' means currently out, 'returned' means available)
+  }, [logs, stockHistory]);
+
+
   // For the Service Log form: how much is truly available for row `idx`, after
   // subtracting whatever earlier rows in this same form already claim for the
   // same product (+ condition, for New/Used categories). Prevents the form from
@@ -949,6 +985,17 @@ export default function App() {
           }
           allCodesSeen[c] = p.productName;
         });
+        // Global check — this code must not currently be "out" with another customer.
+        // If its last recorded event was a Return (or it's never been used), it's fine
+        // to give out again, since it represents the same physical unit coming back
+        // into circulation. We only block active conflicts.
+        relevant.forEach(c => {
+          if (!c) return;
+          const latest = machineCodeStatus[c];
+          if (latest && latest.type === "given") {
+            errors.push(`Machine code "${c}" is currently out with "${latest.who}" (given on ${formatDate(latest.date)} for ${latest.product}) and hasn't been returned yet — it can't be given out again until it's returned.`);
+          }
+        });
       }
     });
     if (errors.length > 0) { alert("⚠ Cannot Save!\n\n" + [...new Set(errors)].join("\n")); return; }
@@ -1163,6 +1210,14 @@ export default function App() {
       for (const c of relevant) {
         if (seen[c]) { alert(`⚠ Duplicate machine code "${c}" entered more than once.`); return; }
         seen[c] = true;
+      }
+      // Sanity check: a code being returned should currently be "out" with a
+      // customer. If it isn't (never used, or already returned), warn but don't
+      // hard-block — could be a legitimate first-time entry for older stock.
+      const suspicious = relevant.filter(c => c && (!machineCodeStatus[c] || machineCodeStatus[c].type !== "given"));
+      if (suspicious.length > 0) {
+        const proceed = confirm(`⚠ Note: code(s) ${suspicious.join(", ")} don't currently show as "given out" in the system (may be a typo, or this is historical data being entered for the first time). Continue anyway?`);
+        if (!proceed) return;
       }
     }
     setSyncStatus("saving"); setSaving(true);
