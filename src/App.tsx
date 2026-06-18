@@ -681,6 +681,29 @@ export default function App() {
     return Math.round(raw*100)/100;
   }
 
+  // For the Service Log form: how much is truly available for row `idx`, after
+  // subtracting whatever earlier rows in this same form already claim for the
+  // same product (+ condition, for New/Used categories). Prevents the form from
+  // showing stale availability when the same item is split across multiple rows.
+  function getLogRowAvailability(idx) {
+    const p = logProducts[idx];
+    if (!p) return 0;
+    const isNewUsed = NEW_USED_CATEGORIES.includes(p.categoryKey);
+    const condKey = isNewUsed ? (p.condition||"new") : "new";
+    const base = isNewUsed ? getConditionQty(p.categoryKey, p.productName, logWarehouse, condKey) : getStockQty(p.categoryKey, p.productName, logWarehouse);
+    let reserved = 0;
+    for (let i = 0; i < idx; i++) {
+      const other = logProducts[i];
+      if (!other) continue;
+      const otherIsNewUsed = NEW_USED_CATEGORIES.includes(other.categoryKey);
+      const otherCond = otherIsNewUsed ? (other.condition||"new") : "new";
+      if (other.categoryKey === p.categoryKey && other.productName === p.productName && otherCond === condKey) {
+        reserved += Number(other.qty||0);
+      }
+    }
+    return Math.round((base-reserved)*100)/100;
+  }
+
   function getProductsForCategory(categoryKey) {
     if (categoryKey==="PURE_OIL") return pureOilProducts;
     return SERVICE_PRODUCT_TYPES.find(c=>c.key===categoryKey)?.products||[];
@@ -888,15 +911,20 @@ export default function App() {
     if (!selectedCustomer || logProducts.length===0) return;
     if (!logTechnician) { alert("⚠ Please select the Technician Name before saving."); return; }
     const errors = [];
-    const allCodesSeen = {}; // code -> productName (first occurrence), to catch cross-row duplicates
+    const allCodesSeen = {}; // code -> productName (first occurrence), to catch ANY reuse across rows
+    const reservedQty = {}; // "categoryKey|productName|condition" -> running total already claimed by earlier rows in this same form
     logProducts.forEach(p => {
       const isNewUsed = NEW_USED_CATEGORIES.includes(p.categoryKey);
-      const available = isNewUsed ? getConditionQty(p.categoryKey, p.productName, logWarehouse, p.condition||"new") : getStockQty(p.categoryKey, p.productName, logWarehouse);
+      const condKey = isNewUsed ? (p.condition||"new") : "new";
+      const reserveKey = `${p.categoryKey}|${p.productName}|${condKey}`;
+      const alreadyReserved = reservedQty[reserveKey] || 0;
+      const available = (isNewUsed ? getConditionQty(p.categoryKey, p.productName, logWarehouse, condKey) : getStockQty(p.categoryKey, p.productName, logWarehouse)) - alreadyReserved;
       if (Number(p.qty) > available) {
         const cat = CATEGORIES[p.categoryKey];
-        const condLabel = isNewUsed ? ` (${p.condition==="used"?"Used":"New"})` : "";
-        errors.push(`${p.productName}${condLabel}: Need ${p.qty} ${cat?.unit} but only ${available} ${cat?.unit} available in ${logWarehouse}`);
+        const condLabel = isNewUsed ? ` (${condKey==="used"?"Used":"New"})` : "";
+        errors.push(`${p.productName}${condLabel}: Need ${p.qty} ${cat?.unit} but only ${Math.max(0,available)} ${cat?.unit} available in ${logWarehouse}${alreadyReserved>0?` (after ${alreadyReserved} already used by another row above)`:""}`);
       }
+      reservedQty[reserveKey] = alreadyReserved + Number(p.qty||0);
       // Validate machine codes — mandatory and must be exactly 9 chars
       if (needsMachineCode(p.categoryKey, p.productName) && Number(p.qty) > 0) {
         const codes = p.machineCodes || [];
@@ -912,11 +940,12 @@ export default function App() {
           if (seenInRow[c]) errors.push(`${p.productName}: Duplicate machine code "${c}" entered more than once`);
           seenInRow[c] = true;
         });
-        // Duplicate check across different product rows in this log
+        // Duplicate check across ALL rows in this log, regardless of product name —
+        // a machine code can only belong to one physical unit, period.
         relevant.forEach(c => {
           if (!c) return;
-          if (allCodesSeen[c] && allCodesSeen[c] !== p.productName) {
-            errors.push(`Machine code "${c}" used for both "${allCodesSeen[c]}" and "${p.productName}" — each code must be unique`);
+          if (allCodesSeen[c]) {
+            errors.push(`Machine code "${c}" is used more than once in this log (for "${allCodesSeen[c]}" and "${p.productName}") — each code must be unique`);
           }
           allCodesSeen[c] = p.productName;
         });
@@ -1764,9 +1793,9 @@ export default function App() {
                       <div>
                         <label>Qty</label>
                         <input type="number" min="0" step="0.01" value={p.qty} onChange={e=>updateLogProduct(i,"qty",e.target.value)}
-                          style={{ borderColor:Number(p.qty)>(NEW_USED_CATEGORIES.includes(p.categoryKey)?getConditionQty(p.categoryKey,p.productName,logWarehouse,p.condition||"new"):getStockQty(p.categoryKey,p.productName,logWarehouse))?"#ef4444":"#3a2e10" }} />
-                        <div style={{ fontSize:9, marginTop:2, color:Number(p.qty)>(NEW_USED_CATEGORIES.includes(p.categoryKey)?getConditionQty(p.categoryKey,p.productName,logWarehouse,p.condition||"new"):getStockQty(p.categoryKey,p.productName,logWarehouse))?"#ef4444":"#7a6a30" }}>
-                          Avail: {NEW_USED_CATEGORIES.includes(p.categoryKey)?getConditionQty(p.categoryKey,p.productName,logWarehouse,p.condition||"new"):getStockQty(p.categoryKey,p.productName,logWarehouse)} {SERVICE_PRODUCT_TYPES.find(t=>t.key===p.categoryKey)?.unit}
+                          style={{ borderColor:Number(p.qty)>getLogRowAvailability(i)?"#ef4444":"#3a2e10" }} />
+                        <div style={{ fontSize:9, marginTop:2, color:Number(p.qty)>getLogRowAvailability(i)?"#ef4444":"#7a6a30" }}>
+                          Avail: {getLogRowAvailability(i)} {SERVICE_PRODUCT_TYPES.find(t=>t.key===p.categoryKey)?.unit}
                         </div>
                       </div>
                     </div>
