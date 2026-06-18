@@ -521,7 +521,7 @@ export default function App() {
 
   // Stock/Purchase form
   const [showStockForm, setShowStockForm] = useState(false);
-  const [stockForm, setStockForm] = useState({ categoryKey:"BATTERY", productName:"AA", qty:"", dateReceived:today(), vendor:"", warehouse:"Al Quoz Warehouse" });
+  const [stockForm, setStockForm] = useState({ categoryKey:"BATTERY", productName:"AA", qty:"", dateReceived:today(), vendor:"", warehouse:"Al Quoz Warehouse", condition:"new" });
 
   // Add Product form (generic, for any category — including Pure Oil)
   const [showAddProductForm, setShowAddProductForm] = useState(false);
@@ -529,7 +529,7 @@ export default function App() {
 
   // Transfer form
   const [showTransferForm, setShowTransferForm] = useState(false);
-  const [transferForm, setTransferForm] = useState({ fromWarehouse:"Al Quoz Warehouse", toWarehouse:"Ajman Warehouse", categoryKey:"BATTERY", productName:"AA", qty:"", date:today() });
+  const [transferForm, setTransferForm] = useState({ fromWarehouse:"Al Quoz Warehouse", toWarehouse:"Ajman Warehouse", categoryKey:"BATTERY", productName:"AA", qty:"", date:today(), condition:"new" });
 
   const [showReturnForm, setShowReturnForm] = useState(false);
   const [returnForm, setReturnForm] = useState({ categoryKey:"FINISHED_AROMA_OIL", warehouse:"Al Quoz Warehouse", productName:"", qty:"", date:today(), customer:"", notes:"", machineCodes:[] });
@@ -985,30 +985,52 @@ export default function App() {
     if (!stockForm.qty || Number(stockForm.qty)<=0) return;
     const cat = CATEGORIES[stockForm.categoryKey];
     const addQty = Number(stockForm.qty);
-    const prevQtyForLog = getStockQty(stockForm.categoryKey, stockForm.productName, stockForm.warehouse); // for display only
-    const historyEntry = { id:Date.now(), date:stockForm.dateReceived, warehouse:stockForm.warehouse, category:cat?.label||stockForm.categoryKey, item:stockForm.productName, vendor:stockForm.vendor, stockInHand:prevQtyForLog, received:addQty, closing:prevQtyForLog+addQty, unit:cat?.unit||"Pcs", type:"purchase" };
+    const isNewUsed = NEW_USED_CATEGORIES.includes(stockForm.categoryKey);
+    const condition = isNewUsed ? (stockForm.condition||"new") : "new";
+    const prevQtyForLog = isNewUsed ? getConditionQty(stockForm.categoryKey, stockForm.productName, stockForm.warehouse, condition) : getStockQty(stockForm.categoryKey, stockForm.productName, stockForm.warehouse); // for display only
+    const historyEntry = { id:Date.now(), date:stockForm.dateReceived, warehouse:stockForm.warehouse, category:cat?.label||stockForm.categoryKey, item:stockForm.productName, vendor:stockForm.vendor, stockInHand:prevQtyForLog, received:addQty, closing:prevQtyForLog+addQty, unit:cat?.unit||"Pcs", type:"purchase", condition };
     setSyncStatus("saving"); setSaving(true);
     (async () => {
       try {
-        const [result] = await adjustStockAtomic([{ warehouse:stockForm.warehouse, categoryKey:stockForm.categoryKey, productName:stockForm.productName, delta:addQty }]);
+        const [result] = await adjustStockAtomic([{ warehouse:stockForm.warehouse, categoryKey:stockForm.categoryKey, productName:stockForm.productName, delta:addQty, condition }]);
         // Use the authoritative closing value from the DB for the history record
         const { error } = await supabase.from("stock_history").insert({
           id: historyEntry.id, date: historyEntry.date, warehouse: historyEntry.warehouse,
           category: historyEntry.category, item: historyEntry.item, vendor: historyEntry.vendor || null,
           stock_in_hand: result.newQty - addQty, received: addQty, closing: result.newQty,
-          unit: historyEntry.unit, type: historyEntry.type,
+          unit: historyEntry.unit, type: historyEntry.type, condition: historyEntry.condition,
         });
         if (error) throw error;
-        setStock(prev => {
-          const updated = JSON.parse(JSON.stringify(prev));
-          if (!updated[stockForm.warehouse]) updated[stockForm.warehouse] = {};
-          if (!updated[stockForm.warehouse][stockForm.categoryKey]) updated[stockForm.warehouse][stockForm.categoryKey] = {};
-          updated[stockForm.warehouse][stockForm.categoryKey][stockForm.productName] = result.newQty;
-          return updated;
-        });
+        if (isNewUsed) {
+          setStockByCondition(prev => {
+            const updated = JSON.parse(JSON.stringify(prev));
+            if (!updated[stockForm.warehouse]) updated[stockForm.warehouse] = {};
+            if (!updated[stockForm.warehouse][stockForm.categoryKey]) updated[stockForm.warehouse][stockForm.categoryKey] = {};
+            if (!updated[stockForm.warehouse][stockForm.categoryKey][stockForm.productName]) updated[stockForm.warehouse][stockForm.categoryKey][stockForm.productName] = { new:0, used:0 };
+            updated[stockForm.warehouse][stockForm.categoryKey][stockForm.productName][condition] = result.newQty;
+            return updated;
+          });
+          setStock(prev => {
+            const updated = JSON.parse(JSON.stringify(prev));
+            if (!updated[stockForm.warehouse]) updated[stockForm.warehouse] = {};
+            if (!updated[stockForm.warehouse][stockForm.categoryKey]) updated[stockForm.warehouse][stockForm.categoryKey] = {};
+            const otherCond = condition === "new" ? "used" : "new";
+            const otherQty = stockByCondition[stockForm.warehouse]?.[stockForm.categoryKey]?.[stockForm.productName]?.[otherCond] || 0;
+            updated[stockForm.warehouse][stockForm.categoryKey][stockForm.productName] = result.newQty + otherQty;
+            return updated;
+          });
+        } else {
+          setStock(prev => {
+            const updated = JSON.parse(JSON.stringify(prev));
+            if (!updated[stockForm.warehouse]) updated[stockForm.warehouse] = {};
+            if (!updated[stockForm.warehouse][stockForm.categoryKey]) updated[stockForm.warehouse][stockForm.categoryKey] = {};
+            updated[stockForm.warehouse][stockForm.categoryKey][stockForm.productName] = result.newQty;
+            return updated;
+          });
+        }
         setStockHistory(h => [{ ...historyEntry, stockInHand: result.newQty - addQty, closing: result.newQty }, ...h]);
         setSyncStatus("synced");
-        setStockForm({ categoryKey:"BATTERY", productName:"AA", qty:"", dateReceived:today(), vendor:"", warehouse:"Al Quoz Warehouse" });
+        setStockForm({ categoryKey:"BATTERY", productName:"AA", qty:"", dateReceived:today(), vendor:"", warehouse:"Al Quoz Warehouse", condition:"new" });
         setShowStockForm(false);
       } catch (err) {
         setSyncStatus("error");
@@ -1027,36 +1049,62 @@ export default function App() {
     const catKey = transferForm.categoryKey;
     const prod = transferForm.productName;
     const qty = Number(transferForm.qty);
-    const available = getStockQty(catKey, prod, from); // upfront check using local state (best-effort warning)
-    if (qty > available) { alert(`⚠ Only ${available} available in ${from}. Refresh and try again if this seems wrong.`); return; }
-    const transferEntry = { id:Date.now(), date:transferForm.date, type:"transfer", from, to, category:CATEGORIES[catKey]?.label||catKey, item:prod, qty, unit:CATEGORIES[catKey]?.unit||"Pcs" };
+    const isNewUsed = NEW_USED_CATEGORIES.includes(catKey);
+    const condition = isNewUsed ? (transferForm.condition||"new") : "new";
+    const available = isNewUsed ? getConditionQty(catKey, prod, from, condition) : getStockQty(catKey, prod, from); // upfront check using local state (best-effort warning)
+    if (qty > available) { alert(`⚠ Only ${available} available in ${from}${isNewUsed?` (${condition==="used"?"Used":"New"})`:""}. Refresh and try again if this seems wrong.`); return; }
+    const transferEntry = { id:Date.now(), date:transferForm.date, type:"transfer", from, to, category:CATEGORIES[catKey]?.label||catKey, item:prod, qty, unit:CATEGORIES[catKey]?.unit||"Pcs", condition };
     setSyncStatus("saving"); setSaving(true);
     (async () => {
       try {
         // Atomic: deduct from source, add to destination — both via DB-side delta
         const results = await adjustStockAtomic([
-          { warehouse:from, categoryKey:catKey, productName:prod, delta:-qty },
-          { warehouse:to, categoryKey:catKey, productName:prod, delta:qty },
+          { warehouse:from, categoryKey:catKey, productName:prod, delta:-qty, condition },
+          { warehouse:to, categoryKey:catKey, productName:prod, delta:qty, condition },
         ]);
         const { error } = await supabase.from("stock_history").insert({
           id: transferEntry.id, date: transferEntry.date, type: "transfer",
           from: transferEntry.from, to: transferEntry.to, category: transferEntry.category,
-          item: transferEntry.item, qty: transferEntry.qty, unit: transferEntry.unit,
+          item: transferEntry.item, qty: transferEntry.qty, unit: transferEntry.unit, condition: transferEntry.condition,
         });
         if (error) throw error;
-        setStock(prev => {
-          const updated = JSON.parse(JSON.stringify(prev));
-          results.forEach(r => {
-            if (!updated[r.warehouse]) updated[r.warehouse] = {};
-            if (!updated[r.warehouse][r.categoryKey]) updated[r.warehouse][r.categoryKey] = {};
-            updated[r.warehouse][r.categoryKey][r.productName] = r.newQty;
+        if (isNewUsed) {
+          setStockByCondition(prev => {
+            const updated = JSON.parse(JSON.stringify(prev));
+            results.forEach(r => {
+              if (!updated[r.warehouse]) updated[r.warehouse] = {};
+              if (!updated[r.warehouse][r.categoryKey]) updated[r.warehouse][r.categoryKey] = {};
+              if (!updated[r.warehouse][r.categoryKey][r.productName]) updated[r.warehouse][r.categoryKey][r.productName] = { new:0, used:0 };
+              updated[r.warehouse][r.categoryKey][r.productName][condition] = r.newQty;
+            });
+            return updated;
           });
-          return updated;
-        });
+          setStock(prev => {
+            const updated = JSON.parse(JSON.stringify(prev));
+            results.forEach(r => {
+              if (!updated[r.warehouse]) updated[r.warehouse] = {};
+              if (!updated[r.warehouse][r.categoryKey]) updated[r.warehouse][r.categoryKey] = {};
+              const otherCond = condition === "new" ? "used" : "new";
+              const otherQty = stockByCondition[r.warehouse]?.[r.categoryKey]?.[r.productName]?.[otherCond] || 0;
+              updated[r.warehouse][r.categoryKey][r.productName] = r.newQty + otherQty;
+            });
+            return updated;
+          });
+        } else {
+          setStock(prev => {
+            const updated = JSON.parse(JSON.stringify(prev));
+            results.forEach(r => {
+              if (!updated[r.warehouse]) updated[r.warehouse] = {};
+              if (!updated[r.warehouse][r.categoryKey]) updated[r.warehouse][r.categoryKey] = {};
+              updated[r.warehouse][r.categoryKey][r.productName] = r.newQty;
+            });
+            return updated;
+          });
+        }
         setStockHistory(h => [transferEntry, ...h]);
         setSyncStatus("synced");
         setShowTransferForm(false);
-        setTransferForm({ fromWarehouse:"Al Quoz Warehouse", toWarehouse:"Ajman Warehouse", categoryKey:"BATTERY", productName:"AA", qty:"", date:today() });
+        setTransferForm({ fromWarehouse:"Al Quoz Warehouse", toWarehouse:"Ajman Warehouse", categoryKey:"BATTERY", productName:"AA", qty:"", date:today(), condition:"new" });
       } catch (err) {
         setSyncStatus("error");
         alert("⚠ Transfer Failed!\n\nPlease check your connection and try again.\n\n" + (err?.message||""));
@@ -1765,16 +1813,25 @@ export default function App() {
             <div style={{ fontWeight:700, fontSize:17, marginBottom:18, color:"#f5d060" }}>📦 Add Stock Purchase</div>
             <div style={{ display:"grid", gap:12 }}>
               <div><label>Warehouse</label><select value={stockForm.warehouse} onChange={e=>setStockForm(f=>({...f,warehouse:e.target.value}))}>{WAREHOUSES.map(w=><option key={w} value={w}>{w}</option>)}</select></div>
-              <div><label>Category</label><select value={stockForm.categoryKey} onChange={e=>{ const newCat=e.target.value; const prods=newCat==="FINISHED_AROMA_OIL"?getFinishedAromaOilProducts(stockForm.warehouse):getAllProducts(newCat); setStockForm(f=>({...f,categoryKey:newCat,productName:prods[0]||""})); }}>{Object.entries(CATEGORIES).map(([k,c])=><option key={k} value={k}>{c.icon} {c.label}</option>)}</select></div>
+              <div><label>Category</label><select value={stockForm.categoryKey} onChange={e=>{ const newCat=e.target.value; const prods=newCat==="FINISHED_AROMA_OIL"?getFinishedAromaOilProducts(stockForm.warehouse):getAllProducts(newCat); setStockForm(f=>({...f,categoryKey:newCat,productName:prods[0]||"",condition:"new"})); }}>{Object.entries(CATEGORIES).map(([k,c])=><option key={k} value={k}>{c.icon} {c.label}</option>)}</select></div>
               <div><label>Product</label>{(()=>{ const prods=stockForm.categoryKey==="FINISHED_AROMA_OIL"?getFinishedAromaOilProducts(stockForm.warehouse):getAllProducts(stockForm.categoryKey); return prods.length>0?<select value={stockForm.productName} onChange={e=>setStockForm(f=>({...f,productName:e.target.value}))}>{prods.map(p=><option key={p} value={p}>{p}</option>)}</select>:<input value={stockForm.productName} onChange={e=>setStockForm(f=>({...f,productName:e.target.value}))} placeholder="Enter product name" />; })()}</div>
+              {NEW_USED_CATEGORIES.includes(stockForm.categoryKey) && (
+                <div>
+                  <label>Condition</label>
+                  <select value={stockForm.condition||"new"} onChange={e=>setStockForm(f=>({...f,condition:e.target.value}))}>
+                    <option value="new">🆕 New</option>
+                    <option value="used">♻️ Used</option>
+                  </select>
+                </div>
+              )}
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
                 <div><label>Quantity ({CATEGORIES[stockForm.categoryKey]?.unit})</label><input type="number" min="0" step="0.01" value={stockForm.qty} onChange={e=>setStockForm(f=>({...f,qty:e.target.value}))} placeholder="0" /></div>
                 <div><label>Date Received</label><input type="date" value={stockForm.dateReceived} onChange={e=>setStockForm(f=>({...f,dateReceived:e.target.value}))} /></div>
               </div>
               <div><label>Vendor Name</label><input value={stockForm.vendor} onChange={e=>setStockForm(f=>({...f,vendor:e.target.value}))} placeholder="Supplier / Vendor name..." /></div>
               <div style={{ background:"#1a1500", border:"1px solid #3a2e10", borderRadius:8, padding:"10px 14px", fontSize:12, color:"#c9a84c" }}>
-                {stockForm.warehouse} — Current: <strong style={{ color:"#f5d060" }}>{getStockQty(stockForm.categoryKey,stockForm.productName,stockForm.warehouse)} {CATEGORIES[stockForm.categoryKey]?.unit}</strong>
-                {" → "}After: <strong style={{ color:"#4ade80" }}>{getStockQty(stockForm.categoryKey,stockForm.productName,stockForm.warehouse)+Number(stockForm.qty||0)} {CATEGORIES[stockForm.categoryKey]?.unit}</strong>
+                {stockForm.warehouse} {NEW_USED_CATEGORIES.includes(stockForm.categoryKey) && `(${stockForm.condition==="used"?"Used":"New"})`} — Current: <strong style={{ color:"#f5d060" }}>{(NEW_USED_CATEGORIES.includes(stockForm.categoryKey)?getConditionQty(stockForm.categoryKey,stockForm.productName,stockForm.warehouse,stockForm.condition||"new"):getStockQty(stockForm.categoryKey,stockForm.productName,stockForm.warehouse))} {CATEGORIES[stockForm.categoryKey]?.unit}</strong>
+                {" → "}After: <strong style={{ color:"#4ade80" }}>{(NEW_USED_CATEGORIES.includes(stockForm.categoryKey)?getConditionQty(stockForm.categoryKey,stockForm.productName,stockForm.warehouse,stockForm.condition||"new"):getStockQty(stockForm.categoryKey,stockForm.productName,stockForm.warehouse))+Number(stockForm.qty||0)} {CATEGORIES[stockForm.categoryKey]?.unit}</strong>
               </div>
             </div>
             <div style={{ display:"flex", gap:10, marginTop:18, justifyContent:"flex-end" }}>
@@ -1877,14 +1934,23 @@ export default function App() {
                 <div><label>From Warehouse</label><select value={transferForm.fromWarehouse} onChange={e=>setTransferForm(f=>({...f,fromWarehouse:e.target.value}))}>{WAREHOUSES.map(w=><option key={w} value={w}>{w}</option>)}</select></div>
                 <div><label>To Warehouse</label><select value={transferForm.toWarehouse} onChange={e=>setTransferForm(f=>({...f,toWarehouse:e.target.value}))}>{WAREHOUSES.map(w=><option key={w} value={w}>{w}</option>)}</select></div>
               </div>
-              <div><label>Category</label><select value={transferForm.categoryKey} onChange={e=>{ const newCat=e.target.value; const prods=newCat==="FINISHED_AROMA_OIL"?getFinishedAromaOilProducts(transferForm.fromWarehouse):getAllProducts(newCat); setTransferForm(f=>({...f,categoryKey:newCat,productName:prods[0]||""})); }}>{Object.entries(CATEGORIES).map(([k,c])=><option key={k} value={k}>{c.icon} {c.label}</option>)}</select></div>
+              <div><label>Category</label><select value={transferForm.categoryKey} onChange={e=>{ const newCat=e.target.value; const prods=newCat==="FINISHED_AROMA_OIL"?getFinishedAromaOilProducts(transferForm.fromWarehouse):getAllProducts(newCat); setTransferForm(f=>({...f,categoryKey:newCat,productName:prods[0]||"",condition:"new"})); }}>{Object.entries(CATEGORIES).map(([k,c])=><option key={k} value={k}>{c.icon} {c.label}</option>)}</select></div>
               <div><label>Product</label>{(()=>{ const prods=transferForm.categoryKey==="FINISHED_AROMA_OIL"?getFinishedAromaOilProducts(transferForm.fromWarehouse):getAllProducts(transferForm.categoryKey); return prods.length>0?<select value={transferForm.productName} onChange={e=>setTransferForm(f=>({...f,productName:e.target.value}))}>{prods.map(p=><option key={p} value={p}>{p}</option>)}</select>:<input value={transferForm.productName} onChange={e=>setTransferForm(f=>({...f,productName:e.target.value}))} placeholder="Enter product name" />; })()}</div>
+              {NEW_USED_CATEGORIES.includes(transferForm.categoryKey) && (
+                <div>
+                  <label>Condition</label>
+                  <select value={transferForm.condition||"new"} onChange={e=>setTransferForm(f=>({...f,condition:e.target.value}))}>
+                    <option value="new">🆕 New</option>
+                    <option value="used">♻️ Used</option>
+                  </select>
+                </div>
+              )}
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
                 <div><label>Quantity</label><input type="number" min="0" step="0.01" value={transferForm.qty} onChange={e=>setTransferForm(f=>({...f,qty:e.target.value}))} placeholder="0" /></div>
                 <div><label>Transfer Date</label><input type="date" value={transferForm.date} onChange={e=>setTransferForm(f=>({...f,date:e.target.value}))} /></div>
               </div>
               <div style={{ background:"#0a0f1a", border:"1px solid #3b82f655", borderRadius:8, padding:"10px 14px", fontSize:12, color:"#60a5fa" }}>
-                Available in {transferForm.fromWarehouse}: <strong style={{ color:"#f5d060" }}>{getStockQty(transferForm.categoryKey,transferForm.productName,transferForm.fromWarehouse)} {CATEGORIES[transferForm.categoryKey]?.unit}</strong>
+                Available in {transferForm.fromWarehouse}{NEW_USED_CATEGORIES.includes(transferForm.categoryKey) && ` (${transferForm.condition==="used"?"Used":"New"})`}: <strong style={{ color:"#f5d060" }}>{(NEW_USED_CATEGORIES.includes(transferForm.categoryKey)?getConditionQty(transferForm.categoryKey,transferForm.productName,transferForm.fromWarehouse,transferForm.condition||"new"):getStockQty(transferForm.categoryKey,transferForm.productName,transferForm.fromWarehouse))} {CATEGORIES[transferForm.categoryKey]?.unit}</strong>
               </div>
             </div>
             <div style={{ display:"flex", gap:10, marginTop:18, justifyContent:"flex-end" }}>
