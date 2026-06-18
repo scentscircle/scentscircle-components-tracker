@@ -1079,7 +1079,7 @@ export default function App() {
     const condition = isNewUsed ? "used" : "new";
     if (isNewUsed) {
       const codes = returnForm.machineCodes || [];
-      const relevant = Array.from({length: parseInt(qty)||0}, (_,ci) => (codes[ci]||"").trim());
+      const relevant = Array.from({length: Math.floor(qty)||0}, (_,ci) => (codes[ci]||"").trim());
       const invalid = relevant.filter(c => !c || c.length !== 9).length;
       if (invalid > 0) { alert(`⚠ Please enter all machine codes (exactly 9 characters each) for the returned ${prod}.`); return; }
       const seen = {};
