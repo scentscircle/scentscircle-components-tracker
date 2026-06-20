@@ -603,8 +603,8 @@ export default function App() {
 
       const historyData = (historyRes.data || []).map(h => ({
         id: h.id, date: h.date, warehouse: h.warehouse || "", category: h.category || "",
-        item: h.item || "", vendor: h.vendor || "", stockInHand: Number(h.stock_in_hand) || 0,
-        received: Number(h.received) || 0, closing: Number(h.closing) || 0, unit: h.unit || "",
+        item: h.item || "", vendor: h.vendor || "", stockInHand: Math.round((Number(h.stock_in_hand)||0)*100)/100,
+        received: Math.round((Number(h.received)||0)*100)/100, closing: Math.round((Number(h.closing)||0)*100)/100, unit: h.unit || "",
         type: h.type || "purchase", from: h.from || "", to: h.to || "", qty: Number(h.qty) || 0,
       }));
 
@@ -1718,9 +1718,9 @@ export default function App() {
                         <td style={{ color:"#c9a84c" }}>{h.category||"Transfer"}</td>
                         <td style={{ fontWeight:600, color:"#f5e6b0" }}>{h.item}</td>
                         <td style={{ color:"#7a6a30" }}>{h.type==="transfer" ? "⇄ Transfer" : (h.vendor||"—")}</td>
-                        <td style={{ textAlign:"center" }}>{h.stockInHand??h.qty}</td>
-                        <td style={{ color:"#4ade80", fontWeight:700, textAlign:"center" }}>{h.type==="transfer"?`⇄${h.qty}`:`+${h.received}`}</td>
-                        <td style={{ color:"#f5d060", fontWeight:700, textAlign:"center" }}>{h.closing??h.qty}</td>
+                        <td style={{ textAlign:"center" }}>{Math.round(((h.stockInHand??h.qty)||0)*100)/100}</td>
+                        <td style={{ color:"#4ade80", fontWeight:700, textAlign:"center" }}>{h.type==="transfer"?`⇄${h.qty}`:`+${Math.round((h.received||0)*100)/100}`}</td>
+                        <td style={{ color:"#f5d060", fontWeight:700, textAlign:"center" }}>{Math.round(((h.closing??h.qty)||0)*100)/100}</td>
                       </tr>
                     ))}
                   </tbody>
