@@ -949,6 +949,7 @@ export default function App() {
   // Filtered purchase history
   const filteredHistory = useMemo(() => {
     let list = stockHistory;
+    if (roleWarehouse) list = list.filter(h => h.warehouse === roleWarehouse);
     if (purchaseFilterWarehouse) list = list.filter(h => h.warehouse === purchaseFilterWarehouse);
     return [...list].sort((a,b) => {
       const dateA = new Date(String(a.date).split("T")[0]).getTime();
@@ -1892,8 +1893,8 @@ export default function App() {
                     <tr><th>S.No</th><th>Date</th><th>From</th><th>To</th><th>Item</th><th>Qty</th></tr>
                   </thead>
                   <tbody>
-                    {stockHistory.filter(h=>h.type==="transfer").length===0 && <tr><td colSpan={6} style={{ textAlign:"center", padding:30, color:"#5a4a20" }}>No transfers yet.</td></tr>}
-                    {stockHistory.filter(h=>h.type==="transfer").map((h,i) => (
+                    {stockHistory.filter(h=>h.type==="transfer" && (!roleWarehouse || h.from===roleWarehouse || h.to===roleWarehouse)).length===0 && <tr><td colSpan={6} style={{ textAlign:"center", padding:30, color:"#5a4a20" }}>No transfers yet.</td></tr>}
+                    {stockHistory.filter(h=>h.type==="transfer" && (!roleWarehouse || h.from===roleWarehouse || h.to===roleWarehouse)).map((h,i) => (
                       <tr key={h.id||i}>
                         <td style={{ color:"#5a4a20", fontSize:11 }}>{i+1}</td>
                         <td style={{ color:"#d4b96a", whiteSpace:"nowrap" }}>{formatDate(h.date)}</td>
@@ -1921,8 +1922,8 @@ export default function App() {
                     <tr><th>S.No</th><th>Date</th><th>Warehouse</th><th>Item</th><th>Returned By/Ref</th><th>Qty Returned</th><th>Closing Stock</th></tr>
                   </thead>
                   <tbody>
-                    {stockHistory.filter(h=>h.type==="return").length===0 && <tr><td colSpan={7} style={{ textAlign:"center", padding:30, color:"#5a4a20" }}>No returns logged yet.</td></tr>}
-                    {stockHistory.filter(h=>h.type==="return").map((h,i) => (
+                    {stockHistory.filter(h=>h.type==="return" && (!roleWarehouse || h.warehouse===roleWarehouse)).length===0 && <tr><td colSpan={7} style={{ textAlign:"center", padding:30, color:"#5a4a20" }}>No returns logged yet.</td></tr>}
+                    {stockHistory.filter(h=>h.type==="return" && (!roleWarehouse || h.warehouse===roleWarehouse)).map((h,i) => (
                       <tr key={h.id||i}>
                         <td style={{ color:"#5a4a20", fontSize:11 }}>{i+1}</td>
                         <td style={{ color:"#d4b96a", whiteSpace:"nowrap" }}>{formatDate(h.date)}</td>
