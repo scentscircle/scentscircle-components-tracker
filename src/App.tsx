@@ -40,7 +40,7 @@ const SERVICE_PRODUCT_TYPES = [
   { key:"FINISHED_AROMA_OIL", label:"♻️ Finished Aroma Oil", products:[], unit:"Ltrs" },
 ];
 
-const TABS = { LOG:"log", CUSTOMERS:"customers", STOCK:"stock", PUREOIL:"pureoil", PURCHASE:"purchase", TRANSFER:"transfer", RETURNS:"returns", REPORT:"report" };
+const TABS = { LOG:"log", CUSTOMERS:"customers", STOCK:"stock", PUREOIL:"pureoil", FINISHEDAROMA:"finishedaroma", PURCHASE:"purchase", TRANSFER:"transfer", RETURNS:"returns", REPORT:"report" };
 const LOG_PAGE_SIZE = 10;
 const CUSTOMER_PAGE_SIZE = 15;
 const LOW_STOCK_PAGE_SIZE = 10;
@@ -318,7 +318,7 @@ function ReportTab({ logs, customers, stock, stockHistory, pureOilProducts }) {
         <div><label>Warehouse</label>
           <select value={stockReportWarehouse} onChange={e=>setStockReportWarehouse(e.target.value)} style={{ width:200 }}>
             <option value="ALL">All Warehouses</option>
-            {WAREHOUSES.map(w=><option key={w} value={w}>{w}</option>)}
+            {availableWarehouses.map(w=><option key={w} value={w}>{w}</option>)}
           </select>
         </div>
         <div style={{ marginLeft:"auto", alignSelf:"flex-end", fontSize:13, color:"#7a6a30" }}>{pureOilReport.length} products with movement</div>
@@ -490,6 +490,74 @@ function ReportTab({ logs, customers, stock, stockHistory, pureOilProducts }) {
 
 
 export default function App() {
+  // Auth state — role persisted in localStorage so refresh doesn't log you out
+  const [authRole, setAuthRole] = useState(() => localStorage.getItem("sc_role") || null);
+  const [authWarehouse, setAuthWarehouse] = useState(() => localStorage.getItem("sc_warehouse") || null);
+  const [loginForm, setLoginForm] = useState({ role:"admin", password:"" });
+  const [loginError, setLoginError] = useState("");
+  const [loginLoading, setLoginLoading] = useState(false);
+
+  async function handleLogin() {
+    if (!loginForm.password) { setLoginError("Please enter a password."); return; }
+    setLoginLoading(true); setLoginError("");
+    const { data, error } = await supabase.from("app_roles").select("*").eq("role", loginForm.role).eq("password", loginForm.password).single();
+    if (error || !data) {
+      setLoginError("Incorrect password. Please try again.");
+    } else {
+      localStorage.setItem("sc_role", data.role);
+      localStorage.setItem("sc_warehouse", data.warehouse || "");
+      setAuthRole(data.role);
+      setAuthWarehouse(data.warehouse || null);
+    }
+    setLoginLoading(false);
+  }
+
+  function handleLogout() {
+    localStorage.removeItem("sc_role");
+    localStorage.removeItem("sc_warehouse");
+    setAuthRole(null);
+    setAuthWarehouse(null);
+    setLoginForm({ role:"admin", password:"" });
+  }
+
+  // If not logged in, show login screen
+  if (!authRole) {
+    return (
+      <div style={{ minHeight:"100vh", background:"#050400", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"Poppins,sans-serif" }}>
+        <div style={{ background:"#0a0800", border:"1px solid #c9a84c", borderRadius:20, padding:"40px 36px", width:"100%", maxWidth:400, boxShadow:"0 20px 60px rgba(0,0,0,0.8)" }}>
+          <div style={{ textAlign:"center", marginBottom:28 }}>
+            <div style={{ fontSize:22, fontWeight:800, background:"linear-gradient(135deg,#f5d060,#c9a84c)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent", letterSpacing:2, textTransform:"uppercase" }}>Scentscircle</div>
+            <div style={{ fontSize:11, color:"#c9a84c", marginTop:4, letterSpacing:2, textTransform:"uppercase", opacity:0.7 }}>Warehouse Stock</div>
+          </div>
+          <div style={{ display:"grid", gap:14 }}>
+            <div>
+              <label style={{ fontSize:11, color:"#c9a84c", fontWeight:600, textTransform:"uppercase", letterSpacing:1 }}>Login As</label>
+              <select value={loginForm.role} onChange={e=>setLoginForm(f=>({...f,role:e.target.value,password:""}))} style={{ width:"100%", marginTop:6 }}>
+                <option value="admin">👑 Admin</option>
+                <option value="office">🏢 Head Office</option>
+                <option value="warehouse">🏭 Warehouse (Al Quoz)</option>
+              </select>
+            </div>
+            <div>
+              <label style={{ fontSize:11, color:"#c9a84c", fontWeight:600, textTransform:"uppercase", letterSpacing:1 }}>Password</label>
+              <input type="password" value={loginForm.password} onChange={e=>setLoginForm(f=>({...f,password:e.target.value}))} onKeyDown={e=>e.key==="Enter"&&handleLogin()} placeholder="Enter password..." style={{ width:"100%", marginTop:6 }} />
+            </div>
+            {loginError && <div style={{ fontSize:12, color:"#f87171", background:"#2d1515", border:"1px solid #f8717140", borderRadius:8, padding:"8px 12px" }}>{loginError}</div>}
+            <button className="btn btn-gold" onClick={handleLogin} disabled={loginLoading} style={{ width:"100%", marginTop:4 }}>{loginLoading?"Checking...":"Login"}</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const isAdmin = authRole === "admin";
+  const isOffice = authRole === "office";
+  const isWarehouse = authRole === "warehouse";
+  // The warehouse this role is locked to (null = admin sees all)
+  const roleWarehouse = authWarehouse || null;
+  // Warehouses visible to this role
+  const availableWarehouses = roleWarehouse ? [roleWarehouse] : WAREHOUSES;
+
   const [tab, setTab] = useState(TABS.LOG);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -507,14 +575,14 @@ export default function App() {
 
   // Selected warehouse for stock view / service log / purchase
   const [selectedWarehouse, setSelectedWarehouse] = useState("Al Quoz Warehouse");
-  const [stockFilterWarehouse, setStockFilterWarehouse] = useState("Al Quoz Warehouse");
+  const [stockFilterWarehouse, setStockFilterWarehouse] = useState(roleWarehouse || "Al Quoz Warehouse");
   const [purchaseFilterWarehouse, setPurchaseFilterWarehouse] = useState("");
 
   // Log form
   const [showLogForm, setShowLogForm] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState("");
   const [serviceDate, setServiceDate] = useState(today());
-  const [logWarehouse, setLogWarehouse] = useState("Al Quoz Warehouse");
+  const [logWarehouse, setLogWarehouse] = useState(roleWarehouse || "Al Quoz Warehouse");
   const [logProducts, setLogProducts] = useState([{ ...emptyProduct }]);
   const [logNotes, setLogNotes] = useState("");
   const [logTechnician, setLogTechnician] = useState("");
@@ -552,6 +620,9 @@ export default function App() {
   const [lowStockPage, setLowStockPage] = useState(1);
   const [pureOilSearch, setPureOilSearch] = useState("");
   const [pureOilSort, setPureOilSort] = useState("name"); // name | low | high
+  const [finishedAromaSearch, setFinishedAromaSearch] = useState("");
+  const [finishedAromaSort, setFinishedAromaSort] = useState("name");
+  const [finishedAromaWarehouse, setFinishedAromaWarehouse] = useState(roleWarehouse || "Al Quoz Warehouse");
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -813,22 +884,45 @@ export default function App() {
     return list;
   }, [pureOilProducts, stock, stockFilterWarehouse, pureOilSearch, pureOilSort, productThresholds]);
 
+  // Finished Aroma Oil tab — searchable, filterable list
+  const displayedFinishedAromaOils = useMemo(() => {
+    const products = getFinishedAromaOilProducts(finishedAromaWarehouse);
+    let list = products.map(p => {
+      const qty = getStockQty("FINISHED_AROMA_OIL", p, finishedAromaWarehouse);
+      return { name: p, qty, isLow: qty < getLowThreshold("FINISHED_AROMA_OIL", p) };
+    });
+    if (finishedAromaSearch.trim()) {
+      const q = finishedAromaSearch.trim().toLowerCase();
+      list = list.filter(item => item.name.toLowerCase().includes(q));
+    }
+    // Low/Sufficient filter only applies for Head Office
+    if (finishedAromaWarehouse === "Head Office") {
+      if (finishedAromaSort === "low") list = list.filter(item => item.isLow);
+      else if (finishedAromaSort === "high") list = list.filter(item => !item.isLow);
+    }
+    list = [...list].sort((a,b) => a.name.localeCompare(b.name));
+    return list;
+  }, [stock, finishedAromaWarehouse, finishedAromaSearch, finishedAromaSort, productThresholds]);
+
   const totalLowStockPages = Math.ceil(nonPureOilLowStockItems.length / LOW_STOCK_PAGE_SIZE);
   const paginatedLowStock = nonPureOilLowStockItems.slice((lowStockPage-1)*LOW_STOCK_PAGE_SIZE, lowStockPage*LOW_STOCK_PAGE_SIZE);
 
   // Log filters
   const filteredLogs = useMemo(() => {
     let list = [...logs];
+    // Role-based warehouse restriction
+    if (roleWarehouse) list = list.filter(l => l.warehouse === roleWarehouse);
     if (filterDate) list = list.filter(l => String(l.date).split("T")[0] === filterDate);
     if (filterCustomer) list = list.filter(l => l.customer === filterCustomer);
     if (filterLogWarehouse) list = list.filter(l => l.warehouse === filterLogWarehouse);
     return list;
-  }, [logs, filterDate, filterCustomer, filterLogWarehouse]);
+  }, [logs, filterDate, filterCustomer, filterLogWarehouse, roleWarehouse]);
 
   const monthLogs = useMemo(() => {
-    if (!filterMonth) return logs;
-    return logs.filter(l => String(l.date).split("T")[0].startsWith(filterMonth));
-  }, [logs, filterMonth]);
+    let list = filterMonth ? logs.filter(l => String(l.date).split("T")[0].startsWith(filterMonth)) : logs;
+    if (roleWarehouse) list = list.filter(l => l.warehouse === roleWarehouse);
+    return list;
+  }, [logs, filterMonth, roleWarehouse]);
 
   const monthStats = useMemo(() => {
     const stats = { services:monthLogs.length, customers:new Set(monthLogs.map((l:any)=>l.customer)).size };
@@ -915,8 +1009,10 @@ export default function App() {
       setPureOilProducts(p => [...p, productName]);
       try { await supabase.from("pure_oils").insert({ name: productName }); } catch {}
     } else {
-      const existing = getAllProducts(categoryKey);
-      if (existing.includes(productName)) { alert("This product already exists in this category."); return; }
+      const targetWarehouses = newProductForm.warehouse === "ALL" ? WAREHOUSES : [newProductForm.warehouse];
+      // Check for duplicates only in the target warehouses, not globally
+      const alreadyExists = targetWarehouses.every(wh => Object.keys(stock[wh]?.[categoryKey]||{}).includes(productName));
+      if (alreadyExists) { alert("This product already exists in this category for the selected warehouse(s)."); return; }
     }
     setSyncStatus("saving"); setSaving(true);
     try {
@@ -1378,6 +1474,12 @@ export default function App() {
           <div>
             <div style={{ fontSize:18, fontWeight:800, background:"linear-gradient(135deg,#f5d060,#c9a84c,#f5d060)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent", letterSpacing:2, textTransform:"uppercase" }}>Scentscircle Warehouse Stock</div>
             <div style={{ fontSize:10, color:"#c9a84c", marginTop:2, fontWeight:500, letterSpacing:1.5, textTransform:"uppercase", opacity:0.8 }}>UAE Warehouse</div>
+            <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:4 }}>
+              <span style={{ fontSize:10, background:isAdmin?"#1a1500":isOffice?"#0a1528":"#0f2d1a", color:isAdmin?"#f5d060":isOffice?"#60a5fa":"#4ade80", border:`1px solid ${isAdmin?"#c9a84c40":isOffice?"#60a5fa40":"#4ade8040"}`, borderRadius:20, padding:"1px 8px", fontWeight:700, textTransform:"uppercase" }}>
+                {isAdmin?"👑 Admin":isOffice?"🏢 Head Office":"🏭 Warehouse"}
+              </span>
+              <button onClick={handleLogout} style={{ cursor:"pointer", background:"transparent", border:"1px solid #c9a84c30", borderRadius:6, color:"#7a6a30", padding:"1px 8px", fontSize:10, fontFamily:"Poppins,sans-serif", fontWeight:600 }}>Logout</button>
+            </div>
           </div>
         </div>
         <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:6 }}>
@@ -1401,14 +1503,15 @@ export default function App() {
       <div style={{ borderBottom:"1px solid #2a2000", display:"flex", padding:"0 20px", background:"#0a0800", overflowX:"auto" }}>
         {[
           { key:TABS.LOG, label:"📋 Service Log" },
-          { key:TABS.CUSTOMERS, label:"👥 Customers" },
+          { key:TABS.CUSTOMERS, label:"👥 Customers", adminOnly:false },
           { key:TABS.STOCK, label:"📦 Stock" },
           { key:TABS.PUREOIL, label:"💧 Pure Oil Stock" },
+          { key:TABS.FINISHEDAROMA, label:"🧴 Finished Aroma Oil" },
           { key:TABS.PURCHASE, label:"🛒 Purchase" },
           { key:TABS.TRANSFER, label:"⇄ Transfer" },
           { key:TABS.RETURNS, label:"♻️ Returns" },
-          { key:TABS.REPORT, label:"📊 Report" },
-        ].map(t => (
+          { key:TABS.REPORT, label:"📊 Report", adminOnly:true },
+        ].filter(t => !t.adminOnly || isAdmin).map(t => (
           <div key={t.key} className={`tab ${tab===t.key?"active":""}`} onClick={() => setTab(t.key)}>{t.label}</div>
         ))}
       </div>
@@ -1443,7 +1546,7 @@ export default function App() {
               <div style={{ display:"flex", gap:10, marginBottom:14, flexWrap:"wrap", alignItems:"flex-end" }}>
                 <div><label>Filter by Date</label><input type="date" value={filterDate} onChange={e=>{setFilterDate(e.target.value);setLogPage(1);}} style={{ width:170 }} /></div>
                 <div><label>Filter by Customer</label><select value={filterCustomer} onChange={e=>{setFilterCustomer(e.target.value);setLogPage(1);}} style={{ width:200 }}><option value="">All Customers</option>{customers.map(c=><option key={c.id} value={c.name}>{c.name}</option>)}</select></div>
-                <div><label>Filter by Warehouse</label><select value={filterLogWarehouse} onChange={e=>{setFilterLogWarehouse(e.target.value);setLogPage(1);}} style={{ width:180 }}><option value="">All Warehouses</option>{WAREHOUSES.map(w=><option key={w} value={w}>{w}</option>)}</select></div>
+                <div><label>Filter by Warehouse</label><select value={filterLogWarehouse} onChange={e=>{setFilterLogWarehouse(e.target.value);setLogPage(1);}} style={{ width:180 }}><option value="">All Warehouses</option>{availableWarehouses.map(w=><option key={w} value={w}>{w}</option>)}</select></div>
                 {(filterDate||filterCustomer||filterLogWarehouse) && <button className="btn btn-outline" onClick={()=>{setFilterDate("");setFilterCustomer("");setFilterLogWarehouse("");setLogPage(1);}} style={{ alignSelf:"flex-end" }}>✕ Clear</button>}
                 <div style={{ alignSelf:"flex-end", marginLeft:"auto", fontSize:12, color:"#7a6a30" }}>{filteredLogs.length} records</div>
               </div>
@@ -1558,7 +1661,7 @@ export default function App() {
                 <div style={{ marginLeft:"auto", display:"flex", gap:10, alignItems:"center" }}>
                   <label style={{ margin:0, whiteSpace:"nowrap" }}>Warehouse:</label>
                   <select value={stockFilterWarehouse} onChange={e=>{setStockFilterWarehouse(e.target.value);setLowStockPage(1);}} style={{ width:200 }}>
-                    {WAREHOUSES.map(w=><option key={w} value={w}>{w}</option>)}
+                    {availableWarehouses.map(w=><option key={w} value={w}>{w}</option>)}
                   </select>
                 </div>
               </div>
@@ -1651,7 +1754,7 @@ export default function App() {
                 <div style={{ marginLeft:"auto", display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" }}>
                   <label style={{ margin:0, whiteSpace:"nowrap" }}>Warehouse:</label>
                   <select value={stockFilterWarehouse} onChange={e=>setStockFilterWarehouse(e.target.value)} style={{ width:180 }}>
-                    {WAREHOUSES.map(w=><option key={w} value={w}>{w}</option>)}
+                    {availableWarehouses.map(w=><option key={w} value={w}>{w}</option>)}
                   </select>
                   <button className="btn btn-gold" onClick={() => { setNewProductForm({ categoryKey:"PURE_OIL", productName:"", warehouse:"ALL" }); setShowAddProductForm(true); }} style={{ fontSize:12 }}>+ Add Pure Oil</button>
                 </div>
@@ -1692,6 +1795,57 @@ export default function App() {
             </>
           )}
 
+          {tab===TABS.FINISHEDAROMA && (
+            <>
+              <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:18, flexWrap:"wrap" }}>
+                <div style={{ fontSize:13, fontWeight:700, color:"#f5d060", textTransform:"uppercase", letterSpacing:1 }}>🧴 Finished Aroma Oil Stock</div>
+                <div style={{ marginLeft:"auto", display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" }}>
+                  <label style={{ margin:0, whiteSpace:"nowrap" }}>Warehouse:</label>
+                  <select value={finishedAromaWarehouse} onChange={e=>{ setFinishedAromaWarehouse(e.target.value); setFinishedAromaSort("name"); }} style={{ width:180 }}>
+                    {availableWarehouses.map(w=><option key={w} value={w}>{w}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div style={{ display:"flex", gap:10, marginBottom:16, flexWrap:"wrap", alignItems:"center" }}>
+                <input value={finishedAromaSearch} onChange={e=>setFinishedAromaSearch(e.target.value)} placeholder="🔍 Search oil by name..." style={{ flex:"1 1 240px", maxWidth:340 }} />
+                {finishedAromaWarehouse === "Head Office" && (
+                  <div style={{ display:"flex", gap:6 }}>
+                    {[{key:"name",label:"Show All"},{key:"low",label:"🔴 Low Stock Only"},{key:"high",label:"🟢 Sufficient Only"}].map(s=>(
+                      <button key={s.key} onClick={()=>setFinishedAromaSort(s.key)} style={{ cursor:"pointer", background:finishedAromaSort===s.key?"linear-gradient(135deg,#f5d060,#c9a84c)":"transparent", color:finishedAromaSort===s.key?"#000":"#c9a84c", border:`1px solid ${finishedAromaSort===s.key?"#c9a84c":"#3a2e10"}`, borderRadius:8, padding:"7px 14px", fontSize:12, fontFamily:"Poppins,sans-serif", fontWeight:600 }}>{s.label}</button>
+                    ))}
+                  </div>
+                )}
+                <div style={{ marginLeft:"auto", fontSize:12, color:"#7a6a30" }}>{displayedFinishedAromaOils.length} products — {finishedAromaWarehouse}</div>
+              </div>
+              <div className="card" style={{ overflow:"auto" }}>
+                <table style={{ width:"100%", borderCollapse:"collapse" }}>
+                  <thead style={{ background:"#0a0800", borderBottom:"1px solid #3a2e10" }}>
+                    <tr><th>#</th><th>Product Name</th><th>Stock</th><th>Status</th></tr>
+                  </thead>
+                  <tbody>
+                    {displayedFinishedAromaOils.length===0 && <tr><td colSpan={4} style={{ textAlign:"center", padding:30, color:"#5a4a20" }}>{finishedAromaSort==="low"?"No oils are currently low on stock. 🎉":finishedAromaSort==="high"?"No oils currently have sufficient stock.":"No Finished Aroma Oils found for this warehouse."}</td></tr>}
+                    {displayedFinishedAromaOils.map((item,i) => {
+                      const low = item.isLow;
+                      return (
+                        <tr key={item.name} style={{ borderBottom:"1px solid #2a2000" }}>
+                          <td style={{ color:"#5a4a20", fontSize:11, padding:"10px 14px" }}>{i+1}</td>
+                          <td style={{ fontWeight:600, color:"#f5e6b0", fontSize:13, padding:"10px 14px" }}>{item.name}</td>
+                          <td style={{ fontWeight:700, fontSize:14, padding:"10px 14px", color:low?"#ef4444":"#86efac" }}>{item.qty} Ltrs</td>
+                          <td style={{ padding:"10px 14px" }}>
+                            {finishedAromaWarehouse === "Head Office" ? (
+                              low ? <span className="pulse" style={{ fontSize:10, background:"#2d0f0f", color:"#f87171", border:"1px solid #ef444440", borderRadius:20, padding:"2px 8px", fontWeight:700 }}>LOW STOCK</span>
+                                  : <span style={{ fontSize:10, background:"#0f2d1a", color:"#86efac", border:"1px solid #86efac40", borderRadius:20, padding:"2px 8px", fontWeight:700 }}>OK</span>
+                            ) : <span style={{ fontSize:10, color:"#5a4a20" }}>—</span>}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+
           {tab===TABS.PURCHASE && (
             <>
               <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:14, flexWrap:"wrap" }}>
@@ -1699,7 +1853,7 @@ export default function App() {
                 <div style={{ marginLeft:"auto", display:"flex", gap:8, alignItems:"center" }}>
                   <select value={purchaseFilterWarehouse} onChange={e=>setPurchaseFilterWarehouse(e.target.value)} style={{ width:200 }}>
                     <option value="">All Warehouses</option>
-                    {WAREHOUSES.map(w=><option key={w} value={w}>{w}</option>)}
+                    {availableWarehouses.map(w=><option key={w} value={w}>{w}</option>)}
                   </select>
                 </div>
               </div>
@@ -1811,7 +1965,7 @@ export default function App() {
                   </div>
                 </div>
                 <div><label>Service Date</label><input type="date" value={serviceDate} onChange={e=>setServiceDate(e.target.value)} /></div>
-                <div><label>Warehouse</label><select value={logWarehouse} onChange={e=>setLogWarehouse(e.target.value)}>{WAREHOUSES.map(w=><option key={w} value={w}>{w}</option>)}</select></div>
+                <div><label>Warehouse</label><select value={logWarehouse} onChange={e=>setLogWarehouse(e.target.value)}>{availableWarehouses.map(w=><option key={w} value={w}>{w}</option>)}</select></div>
               </div>
               <div>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
@@ -1901,7 +2055,7 @@ export default function App() {
           <div className="card slide-in" onClick={e=>e.stopPropagation()} style={{ width:"100%", maxWidth:500, margin:16, padding:24, background:"#0a0800", border:"1px solid #c9a84c" }}>
             <div style={{ fontWeight:700, fontSize:17, marginBottom:18, color:"#f5d060" }}>📦 Add Stock Purchase</div>
             <div style={{ display:"grid", gap:12 }}>
-              <div><label>Warehouse</label><select value={stockForm.warehouse} onChange={e=>{ setStockForm(f=>({...f,warehouse:e.target.value,productName:""})); setStockProductSearch(""); }}>{WAREHOUSES.map(w=><option key={w} value={w}>{w}</option>)}</select></div>
+              <div><label>Warehouse</label><select value={stockForm.warehouse} onChange={e=>{ setStockForm(f=>({...f,warehouse:e.target.value,productName:""})); setStockProductSearch(""); }}>{availableWarehouses.map(w=><option key={w} value={w}>{w}</option>)}</select></div>
               <div><label>Category</label><select value={stockForm.categoryKey} onChange={e=>{ const newCat=e.target.value; const prods=newCat==="FINISHED_AROMA_OIL"?getFinishedAromaOilProducts(stockForm.warehouse):getAllProducts(newCat); setStockForm(f=>({...f,categoryKey:newCat,productName:prods[0]||"",condition:"new"})); setStockProductSearch(""); }}>{Object.entries(CATEGORIES).map(([k,c])=><option key={k} value={k}>{c.icon} {c.label}</option>)}</select></div>
               <div>
                 <label>Product</label>
@@ -1971,7 +2125,7 @@ export default function App() {
                   <option value="AEROSOL_DISPENSER">🌀 Aerosol Dispenser</option>
                 </select>
               </div>
-              <div><label>Warehouse</label><select value={returnForm.warehouse} onChange={e=>{ const wh=e.target.value; const prods = returnForm.categoryKey==="FINISHED_AROMA_OIL" ? getFinishedAromaOilProducts(wh) : getAllProducts(returnForm.categoryKey); setReturnForm(f=>({...f,warehouse:wh,productName:prods.includes(f.productName)?f.productName:""})); setReturnProductSearch(""); }}>{WAREHOUSES.map(w=><option key={w} value={w}>{w}</option>)}</select></div>
+              <div><label>Warehouse</label><select value={returnForm.warehouse} onChange={e=>{ const wh=e.target.value; const prods = returnForm.categoryKey==="FINISHED_AROMA_OIL" ? getFinishedAromaOilProducts(wh) : getAllProducts(returnForm.categoryKey); setReturnForm(f=>({...f,warehouse:wh,productName:prods.includes(f.productName)?f.productName:""})); setReturnProductSearch(""); }}>{availableWarehouses.map(w=><option key={w} value={w}>{w}</option>)}</select></div>
               <div>
                 <label>{CATEGORIES[returnForm.categoryKey]?.label || "Product"}</label>
                 {(()=>{ const prods = returnForm.categoryKey==="FINISHED_AROMA_OIL" ? getFinishedAromaOilProducts(returnForm.warehouse) : getAllProducts(returnForm.categoryKey); return prods.length>0?(
@@ -2010,7 +2164,13 @@ export default function App() {
                 <div><label>Quantity Returned {CATEGORIES[returnForm.categoryKey]?.unit && `(${CATEGORIES[returnForm.categoryKey].unit})`}</label><input type="number" min="0" step="0.01" value={returnForm.qty} onChange={e=>{ const val=e.target.value; setReturnForm(f=>{ const num=parseInt(val)||0; const isNewUsed=NEW_USED_CATEGORIES.includes(f.categoryKey); const codes = isNewUsed ? Array.from({length:num},(_,i)=>f.machineCodes?.[i]||"") : f.machineCodes; return {...f,qty:val,machineCodes:codes}; }); }} placeholder="0" /></div>
                 <div><label>Return Date</label><input type="date" value={returnForm.date} onChange={e=>setReturnForm(f=>({...f,date:e.target.value}))} /></div>
               </div>
-              <div><label>Returned By / Customer Ref (optional)</label><input value={returnForm.customer} onChange={e=>setReturnForm(f=>({...f,customer:e.target.value}))} placeholder="e.g. Technician name or client name" /></div>
+              <div>
+                <label>Technician (optional)</label>
+                <select value={returnForm.customer} onChange={e=>setReturnForm(f=>({...f,customer:e.target.value}))}>
+                  <option value="">Select technician...</option>
+                  {technicians.map(t=><option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
               {NEW_USED_CATEGORIES.includes(returnForm.categoryKey) && Number(returnForm.qty)>0 && (
                 <div style={{ background:"#0a0800", border:"1px solid #3a2e10", borderRadius:8, padding:"10px 12px" }}>
                   <div style={{ fontSize:10, color:"#c9a84c", fontWeight:700, marginBottom:6, textTransform:"uppercase" }}>🔧 Machine Codes ({returnForm.productName}) — 9 characters required</div>
@@ -2046,8 +2206,8 @@ export default function App() {
             <div style={{ fontWeight:700, fontSize:17, marginBottom:18, color:"#60a5fa" }}>⇄ Inter-Warehouse Transfer</div>
             <div style={{ display:"grid", gap:12 }}>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
-                <div><label>From Warehouse</label><select value={transferForm.fromWarehouse} onChange={e=>setTransferForm(f=>({...f,fromWarehouse:e.target.value}))}>{WAREHOUSES.map(w=><option key={w} value={w}>{w}</option>)}</select></div>
-                <div><label>To Warehouse</label><select value={transferForm.toWarehouse} onChange={e=>setTransferForm(f=>({...f,toWarehouse:e.target.value}))}>{WAREHOUSES.map(w=><option key={w} value={w}>{w}</option>)}</select></div>
+                <div><label>From Warehouse</label><select value={transferForm.fromWarehouse} onChange={e=>setTransferForm(f=>({...f,fromWarehouse:e.target.value}))}>{availableWarehouses.map(w=><option key={w} value={w}>{w}</option>)}</select></div>
+                <div><label>To Warehouse</label><select value={transferForm.toWarehouse} onChange={e=>setTransferForm(f=>({...f,toWarehouse:e.target.value}))}>{availableWarehouses.map(w=><option key={w} value={w}>{w}</option>)}</select></div>
               </div>
               <div><label>Category</label><select value={transferForm.categoryKey} onChange={e=>{ const newCat=e.target.value; const prods=newCat==="FINISHED_AROMA_OIL"?getFinishedAromaOilProducts(transferForm.fromWarehouse):getAllProducts(newCat); setTransferForm(f=>({...f,categoryKey:newCat,productName:prods[0]||"",condition:"new"})); }}>{Object.entries(CATEGORIES).map(([k,c])=><option key={k} value={k}>{c.icon} {c.label}</option>)}</select></div>
               <div><label>Product</label>{(()=>{ const prods=transferForm.categoryKey==="FINISHED_AROMA_OIL"?getFinishedAromaOilProducts(transferForm.fromWarehouse):getAllProducts(transferForm.categoryKey); return prods.length>0?<select value={transferForm.productName} onChange={e=>setTransferForm(f=>({...f,productName:e.target.value}))}>{prods.map(p=><option key={p} value={p}>{p}</option>)}</select>:<input value={transferForm.productName} onChange={e=>setTransferForm(f=>({...f,productName:e.target.value}))} placeholder="Enter product name" />; })()}</div>
@@ -2097,7 +2257,7 @@ export default function App() {
                 <label>Warehouse</label>
                 <select value={newProductForm.warehouse} onChange={e=>setNewProductForm(f=>({...f,warehouse:e.target.value}))}>
                   <option value="ALL">All Warehouses</option>
-                  {WAREHOUSES.map(w=><option key={w} value={w}>{w}</option>)}
+                  {availableWarehouses.map(w=><option key={w} value={w}>{w}</option>)}
                 </select>
               </div>
               <div style={{ fontSize:11, color:"#7a6a30" }}>
