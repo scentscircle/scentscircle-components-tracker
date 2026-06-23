@@ -15,7 +15,7 @@ const CATEGORIES = {
   OIL_COMPONENTS: { label:"Oil Components", icon:"🧪", unit:"Ltrs", lowThreshold:50, products:["DPG","Alcohol"] },
   AROMA_DIFFUSER: { label:"Aroma Diffuser", icon:"🌀", unit:"Pcs", lowThreshold:20, products:["Scent Pro Medium","Scent Pro Large","Scent Pro Small","SC Mini","Hexascent","Nano Smart","Airslim","Airslim Pro","Scent Matrix","Edge","SC Magnet","Smart Small Diffuser","Aeromax Pro 100","Aeromax Pro 200","Aura Car Diffuser","Turbo Diffuser","Ecoscent","Dr. Care 200","Dr. Care 300","Dr. Care 500","Dr. Care 1000","Care Aroma 24/7","Care Aroma Scent Frame","Care Aroma Scentra","Care Aroma Glow Mist","Care Aroma Drive Mist"] },
   PURE_OIL: { label:"Pure Oil", icon:"💧", unit:"Ltrs", lowThreshold:15, products:[] },
-  FINISHED_AROMA_OIL: { label:"Finished Aroma Oil", icon:"♻️", unit:"Ltrs", lowThreshold:5, products:[] }
+  FINISHED_AROMA_OIL: { label:"Finished Aroma Oil", icon:"♻️", unit:"Ltrs", lowThreshold:1, products:[] }
 };
 
 // Categories that need machine codes
@@ -508,6 +508,7 @@ export default function App() {
       localStorage.setItem("sc_warehouse", data.warehouse || "");
       setAuthRole(data.role);
       setAuthWarehouse(data.warehouse || null);
+      window.location.reload();
     }
     setLoginLoading(false);
   }
@@ -515,9 +516,7 @@ export default function App() {
   function handleLogout() {
     localStorage.removeItem("sc_role");
     localStorage.removeItem("sc_warehouse");
-    setAuthRole(null);
-    setAuthWarehouse(null);
-    setLoginForm({ role:"admin", password:"" });
+    window.location.reload();
   }
 
   // If not logged in, show login screen
@@ -1003,7 +1002,7 @@ export default function App() {
   async function addNewProduct() {
     const categoryKey = newProductForm.categoryKey;
     const productName = newProductForm.productName.trim();
-    if (!productName) return;
+    if (!productName) { alert("⚠ Please enter a product name before saving."); return; }
     if (categoryKey === "PURE_OIL") {
       if (pureOilProducts.includes(productName)) { alert("This pure oil already exists."); return; }
       setPureOilProducts(p => [...p, productName]);
@@ -2206,8 +2205,8 @@ export default function App() {
             <div style={{ fontWeight:700, fontSize:17, marginBottom:18, color:"#60a5fa" }}>⇄ Inter-Warehouse Transfer</div>
             <div style={{ display:"grid", gap:12 }}>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
-                <div><label>From Warehouse</label><select value={transferForm.fromWarehouse} onChange={e=>setTransferForm(f=>({...f,fromWarehouse:e.target.value}))}>{availableWarehouses.map(w=><option key={w} value={w}>{w}</option>)}</select></div>
-                <div><label>To Warehouse</label><select value={transferForm.toWarehouse} onChange={e=>setTransferForm(f=>({...f,toWarehouse:e.target.value}))}>{availableWarehouses.map(w=><option key={w} value={w}>{w}</option>)}</select></div>
+                <div><label>From Warehouse</label><select value={transferForm.fromWarehouse} onChange={e=>setTransferForm(f=>({...f,fromWarehouse:e.target.value}))}>{WAREHOUSES.map(w=><option key={w} value={w}>{w}</option>)}</select></div>
+                <div><label>To Warehouse</label><select value={transferForm.toWarehouse} onChange={e=>setTransferForm(f=>({...f,toWarehouse:e.target.value}))}>{WAREHOUSES.map(w=><option key={w} value={w}>{w}</option>)}</select></div>
               </div>
               <div><label>Category</label><select value={transferForm.categoryKey} onChange={e=>{ const newCat=e.target.value; const prods=newCat==="FINISHED_AROMA_OIL"?getFinishedAromaOilProducts(transferForm.fromWarehouse):getAllProducts(newCat); setTransferForm(f=>({...f,categoryKey:newCat,productName:prods[0]||"",condition:"new"})); }}>{Object.entries(CATEGORIES).map(([k,c])=><option key={k} value={k}>{c.icon} {c.label}</option>)}</select></div>
               <div><label>Product</label>{(()=>{ const prods=transferForm.categoryKey==="FINISHED_AROMA_OIL"?getFinishedAromaOilProducts(transferForm.fromWarehouse):getAllProducts(transferForm.categoryKey); return prods.length>0?<select value={transferForm.productName} onChange={e=>setTransferForm(f=>({...f,productName:e.target.value}))}>{prods.map(p=><option key={p} value={p}>{p}</option>)}</select>:<input value={transferForm.productName} onChange={e=>setTransferForm(f=>({...f,productName:e.target.value}))} placeholder="Enter product name" />; })()}</div>
@@ -2268,7 +2267,7 @@ export default function App() {
             </div>
             <div style={{ display:"flex", gap:10, marginTop:18, justifyContent:"flex-end" }}>
               <button className="btn btn-outline" onClick={()=>setShowAddProductForm(false)}>Cancel</button>
-              <button className="btn btn-gold" onClick={addNewProduct} disabled={saving}>{saving?"Saving...":"Add Product"}</button>
+              <button className="btn btn-gold" onClick={addNewProduct} disabled={saving || !newProductForm.productName.trim()}>{saving?"Saving...":"Add Product"}</button>
             </div>
           </div>
         </div>
