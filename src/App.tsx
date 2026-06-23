@@ -318,7 +318,7 @@ function ReportTab({ logs, customers, stock, stockHistory, pureOilProducts }) {
         <div><label>Warehouse</label>
           <select value={stockReportWarehouse} onChange={e=>setStockReportWarehouse(e.target.value)} style={{ width:200 }}>
             <option value="ALL">All Warehouses</option>
-            {availableWarehouses.map(w=><option key={w} value={w}>{w}</option>)}
+            {WAREHOUSES.map(w=><option key={w} value={w}>{w}</option>)}
           </select>
         </div>
         <div style={{ marginLeft:"auto", alignSelf:"flex-end", fontSize:13, color:"#7a6a30" }}>{pureOilReport.length} products with movement</div>
