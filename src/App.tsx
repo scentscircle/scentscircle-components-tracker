@@ -575,7 +575,7 @@ export default function App() {
   // Selected warehouse for stock view / service log / purchase
   const [selectedWarehouse, setSelectedWarehouse] = useState("Al Quoz Warehouse");
   const [stockFilterWarehouse, setStockFilterWarehouse] = useState(roleWarehouse || "Al Quoz Warehouse");
-  const [purchaseFilterWarehouse, setPurchaseFilterWarehouse] = useState("");
+  const [purchaseFilterWarehouse, setPurchaseFilterWarehouse] = useState(roleWarehouse||"");
 
   // Log form
   const [showLogForm, setShowLogForm] = useState(false);
@@ -592,7 +592,7 @@ export default function App() {
 
   // Add Product form (generic, for any category — including Pure Oil)
   const [showAddProductForm, setShowAddProductForm] = useState(false);
-  const [newProductForm, setNewProductForm] = useState({ categoryKey:"BATTERY", productName:"", warehouse:"ALL" });
+  const [newProductForm, setNewProductForm] = useState({ categoryKey:"BATTERY", productName:"", warehouse:roleWarehouse||"ALL" });
 
   // Transfer form
   const [showTransferForm, setShowTransferForm] = useState(false);
@@ -1755,7 +1755,7 @@ export default function App() {
                   <select value={stockFilterWarehouse} onChange={e=>setStockFilterWarehouse(e.target.value)} style={{ width:180 }}>
                     {availableWarehouses.map(w=><option key={w} value={w}>{w}</option>)}
                   </select>
-                  <button className="btn btn-gold" onClick={() => { setNewProductForm({ categoryKey:"PURE_OIL", productName:"", warehouse:"ALL" }); setShowAddProductForm(true); }} style={{ fontSize:12 }}>+ Add Pure Oil</button>
+                  <button className="btn btn-gold" onClick={() => { setNewProductForm({ categoryKey:"PURE_OIL", productName:"", warehouse:roleWarehouse||"ALL" }); setShowAddProductForm(true); }} style={{ fontSize:12, display:"none" }}>+ Add Pure Oil</button>
                 </div>
               </div>
               <div style={{ display:"flex", gap:10, marginBottom:16, flexWrap:"wrap", alignItems:"center" }}>
@@ -1773,7 +1773,7 @@ export default function App() {
                     <tr><th>#</th><th>Fragrance Name</th><th>Stock</th><th>Status</th></tr>
                   </thead>
                   <tbody>
-                    {displayedPureOils.length===0 && <tr><td colSpan={4} style={{ textAlign:"center", padding:30, color:"#5a4a20" }}>{pureOilProducts.length===0 ? "No Pure Oils added yet. Click '+ Add Pure Oil'." : pureOilSort==="low" ? "No oils are currently low on stock. 🎉" : pureOilSort==="high" ? "No oils currently have sufficient stock." : "No oils match your search."}</td></tr>}
+                    {displayedPureOils.length===0 && <tr><td colSpan={4} style={{ textAlign:"center", padding:30, color:"#5a4a20" }}>{pureOilProducts.length===0 ? "No Pure Oils added yet." : pureOilSort==="low" ? "No oils are currently low on stock. 🎉" : pureOilSort==="high" ? "No oils currently have sufficient stock." : "No oils match your search."}</td></tr>}
                     {displayedPureOils.map((item,i) => {
                       const low = item.isLow;
                       return (
@@ -1851,7 +1851,7 @@ export default function App() {
                 <div style={{ fontSize:13, fontWeight:700, color:"#f5d060", textTransform:"uppercase", letterSpacing:1 }}>🛒 Stock Purchase History</div>
                 <div style={{ marginLeft:"auto", display:"flex", gap:8, alignItems:"center" }}>
                   <select value={purchaseFilterWarehouse} onChange={e=>setPurchaseFilterWarehouse(e.target.value)} style={{ width:200 }}>
-                    <option value="">All Warehouses</option>
+                    {isAdmin && <option value="">All Warehouses</option>}
                     {availableWarehouses.map(w=><option key={w} value={w}>{w}</option>)}
                   </select>
                 </div>
@@ -2255,7 +2255,7 @@ export default function App() {
               <div>
                 <label>Warehouse</label>
                 <select value={newProductForm.warehouse} onChange={e=>setNewProductForm(f=>({...f,warehouse:e.target.value}))}>
-                  <option value="ALL">All Warehouses</option>
+                  {isAdmin && <option value="ALL">All Warehouses</option>}
                   {availableWarehouses.map(w=><option key={w} value={w}>{w}</option>)}
                 </select>
               </div>
