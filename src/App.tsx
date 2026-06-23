@@ -588,7 +588,7 @@ export default function App() {
 
   // Stock/Purchase form
   const [showStockForm, setShowStockForm] = useState(false);
-  const [stockForm, setStockForm] = useState({ categoryKey:"BATTERY", productName:"AA", qty:"", dateReceived:today(), vendor:"", warehouse:"Al Quoz Warehouse", condition:"new" });
+  const [stockForm, setStockForm] = useState({ categoryKey:"BATTERY", productName:"AA", qty:"", dateReceived:today(), vendor:"", warehouse:roleWarehouse||"Al Quoz Warehouse", condition:"new" });
 
   // Add Product form (generic, for any category — including Pure Oil)
   const [showAddProductForm, setShowAddProductForm] = useState(false);
@@ -599,7 +599,7 @@ export default function App() {
   const [transferForm, setTransferForm] = useState({ fromWarehouse:"Al Quoz Warehouse", toWarehouse:"Ajman Warehouse", categoryKey:"BATTERY", productName:"AA", qty:"", date:today(), condition:"new" });
 
   const [showReturnForm, setShowReturnForm] = useState(false);
-  const [returnForm, setReturnForm] = useState({ categoryKey:"FINISHED_AROMA_OIL", warehouse:"Al Quoz Warehouse", productName:"", qty:"", date:today(), customer:"", notes:"", machineCodes:[] });
+  const [returnForm, setReturnForm] = useState({ categoryKey:"FINISHED_AROMA_OIL", warehouse:roleWarehouse||"Al Quoz Warehouse", productName:"", qty:"", date:today(), customer:"", notes:"", machineCodes:[] });
   const [returnProductSearch, setReturnProductSearch] = useState("");
   const [stockProductSearch, setStockProductSearch] = useState("");
 
@@ -1205,7 +1205,7 @@ export default function App() {
         }
         setStockHistory(h => [{ ...historyEntry, stockInHand: result.newQty - addQty, closing: result.newQty }, ...h]);
         setSyncStatus("synced");
-        setStockForm({ categoryKey:"BATTERY", productName:"AA", qty:"", dateReceived:today(), vendor:"", warehouse:"Al Quoz Warehouse", condition:"new" });
+        setStockForm({ categoryKey:"BATTERY", productName:"AA", qty:"", dateReceived:today(), vendor:"", warehouse:roleWarehouse||"Al Quoz Warehouse", condition:"new" });
         setStockProductSearch("");
         setShowStockForm(false);
       } catch (err) {
@@ -1362,7 +1362,7 @@ export default function App() {
         setStockHistory(h => [returnEntry, ...h]);
         setSyncStatus("synced");
         setShowReturnForm(false);
-        setReturnForm({ categoryKey:"FINISHED_AROMA_OIL", warehouse:"Al Quoz Warehouse", productName:"", qty:"", date:today(), customer:"", notes:"", machineCodes:[] });
+        setReturnForm({ categoryKey:"FINISHED_AROMA_OIL", warehouse:roleWarehouse||"Al Quoz Warehouse", productName:"", qty:"", date:today(), customer:"", notes:"", machineCodes:[] });
         setReturnProductSearch("");
       } catch (err) {
         setSyncStatus("error");
