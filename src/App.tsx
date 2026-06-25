@@ -541,6 +541,7 @@ export default function App() {
   const [purchaseFilterWarehouse, setPurchaseFilterWarehouse] = useState(roleWarehouse||"");
 
   const [showLogForm, setShowLogForm] = useState(false);
+  const [editingLog, setEditingLog] = useState(null); // holds the original log being edited
   const [selectedCustomer, setSelectedCustomer] = useState("");
   const [serviceDate, setServiceDate] = useState(today());
   const [logWarehouse, setLogWarehouse] = useState(roleWarehouse || "Al Quoz Warehouse");
@@ -727,6 +728,16 @@ export default function App() {
     const isNewUsed = NEW_USED_CATEGORIES.includes(p.categoryKey);
     const condKey = isNewUsed ? (p.condition||"new") : "new";
     const base = isNewUsed ? getConditionQty(p.categoryKey, p.productName, logWarehouse, condKey) : getStockQty(p.categoryKey, p.productName, logWarehouse);
+    // In edit mode: add back what the original log already deducted for this product
+    // so the "available" reflects true available if this log's old deduction were reversed
+    let oldQtyForThisProduct = 0;
+    if (editingLog) {
+      const oldProds = (() => { try { return JSON.parse(editingLog.products||"[]"); } catch { return []; } })();
+      oldQtyForThisProduct = oldProds
+        .filter(op => op.categoryKey === p.categoryKey && op.productName === p.productName &&
+          (isNewUsed ? (op.condition||"new") === condKey : true))
+        .reduce((s, op) => s + Number(op.qty||0), 0);
+    }
     let reserved = 0;
     for (let i = 0; i < idx; i++) {
       const other = logProducts[i];
@@ -737,7 +748,7 @@ export default function App() {
         reserved += Number(other.qty||0);
       }
     }
-    return Math.round((base-reserved)*100)/100;
+    return Math.round((base + oldQtyForThisProduct - reserved)*100)/100;
   }
 
   function getProductsForCategory(categoryKey) {
@@ -941,6 +952,16 @@ export default function App() {
         });
         return updated;
       });
+      // Also init stockByCondition so availability checks work immediately
+      setStockByCondition(prev => {
+        const updated = JSON.parse(JSON.stringify(prev));
+        targetWarehouses.forEach(wh => {
+          if (!updated[wh]) updated[wh] = {};
+          if (!updated[wh][categoryKey]) updated[wh][categoryKey] = {};
+          if (!updated[wh][categoryKey][productName]) updated[wh][categoryKey][productName] = { new:0, used:0 };
+        });
+        return updated;
+      });
       setSyncStatus("synced");
       setNewProductForm({ categoryKey:"BATTERY", productName:"", warehouse:"ALL" });
       setShowAddProductForm(false);
@@ -949,6 +970,153 @@ export default function App() {
       alert("⚠ Save Failed!\n\n" + (err?.message||""));
     }
     setSaving(false);
+  }
+
+  // Open the log form pre-filled for editing
+  function openEditLog(log) {
+    let prods = [];
+    try { prods = JSON.parse(log.products||"[]"); } catch {}
+    // Ensure every product has required fields
+    const normalized = prods.map(p => ({
+      categoryKey: p.categoryKey || "BATTERY",
+      productName: p.productName || "",
+      qty: String(p.qty || ""),
+      machineCodes: p.machineCodes || [],
+      condition: p.condition || "new",
+    }));
+    setEditingLog(log);
+    setSelectedCustomer(log.customer || "");
+    setServiceDate(String(log.date).split("T")[0]);
+    setLogWarehouse(log.warehouse || (roleWarehouse || "Al Quoz Warehouse"));
+    setLogProducts(normalized.length > 0 ? normalized : [{ ...emptyProduct }]);
+    setLogNotes(log.notes || "");
+    setLogTechnician(log.technician || "");
+    setShowLogForm(true);
+  }
+
+  // Save an edited log: reverse old stock deductions, apply new ones
+  function submitEditLog() {
+    if (!selectedCustomer || logProducts.length === 0) return;
+    if (!logTechnician) { alert("⚠ Please select the Technician Name before saving."); return; }
+
+    // Same validation as submitLog
+    const errors = [];
+    const allCodesSeen = {};
+    const reservedQty = {};
+    logProducts.forEach(p => {
+      const isNewUsed = NEW_USED_CATEGORIES.includes(p.categoryKey);
+      const condKey = isNewUsed ? (p.condition||"new") : "new";
+      const reserveKey = `${p.categoryKey}|${p.productName}|${condKey}`;
+      const alreadyReserved = reservedQty[reserveKey] || 0;
+      if (!p.qty || Number(p.qty) <= 0) { errors.push(`${p.productName||"(blank)"}: Quantity must be greater than 0.`); }
+      if (!p.productName || !p.productName.trim()) { errors.push(`A product row has a blank name. Please select a product.`); }
+      // For availability check: add back what OLD log took, then check against new qty
+      // We calculate available as current stock + old qty for same product (since old deduction still in DB)
+      const oldProds = (() => { try { return JSON.parse(editingLog.products||"[]"); } catch { return []; } })();
+      const oldQtyForThisProduct = oldProds
+        .filter(op => op.categoryKey === p.categoryKey && op.productName === p.productName &&
+          (isNewUsed ? (op.condition||"new") === condKey : true))
+        .reduce((s, op) => s + Number(op.qty||0), 0);
+      const currentStock = isNewUsed
+        ? getConditionQty(p.categoryKey, p.productName, logWarehouse, condKey)
+        : getStockQty(p.categoryKey, p.productName, logWarehouse);
+      const available = currentStock + oldQtyForThisProduct - alreadyReserved;
+      if (p.productName && Number(p.qty) > 0 && Number(p.qty) > available) {
+        const cat = CATEGORIES[p.categoryKey];
+        errors.push(`${p.productName}: Need ${p.qty} ${cat?.unit} but only ${Math.max(0,available)} ${cat?.unit} available (including the ${oldQtyForThisProduct} currently deducted by this log)`);
+      }
+      reservedQty[reserveKey] = alreadyReserved + Number(p.qty||0);
+      if (p.productName && needsMachineCode(p.categoryKey, p.productName) && Number(p.qty) > 0) {
+        const codes = p.machineCodes || [];
+        const relevant = Array.from({length: parseInt(p.qty)||0}, (_,ci) => (codes[ci]||"").trim());
+        const invalid = relevant.filter(c => !c || c.length !== 9).length;
+        if (invalid > 0) errors.push(`${p.productName}: All machine codes must be exactly 9 characters — ${invalid} invalid/missing`);
+        const seenInRow = {};
+        relevant.forEach(c => {
+          if (!c) return;
+          if (seenInRow[c]) errors.push(`${p.productName}: Duplicate machine code "${c}"`);
+          seenInRow[c] = true;
+          if (allCodesSeen[c]) errors.push(`Machine code "${c}" used more than once`);
+          allCodesSeen[c] = p.productName;
+        });
+        // Only block on machine code if it's given to SOMEONE ELSE (not this same log)
+        relevant.forEach(c => {
+          if (!c) return;
+          const latest = machineCodeStatus[c];
+          if (latest && latest.type === "given" && latest.who !== editingLog.customer) {
+            errors.push(`Machine code "${c}" is currently out with "${latest.who}" and hasn't been returned.`);
+          }
+        });
+      }
+    });
+    if (errors.length > 0) { alert("⚠ Cannot Save!\n\n" + [...new Set(errors)].join("\n")); return; }
+
+    setSyncStatus("saving"); setSaving(true);
+    (async () => {
+      try {
+        const oldProds = (() => { try { return JSON.parse(editingLog.products||"[]"); } catch { return []; } })();
+
+        // Step 1: Reverse OLD stock deductions (add back what was taken)
+        const reverseRows = oldProds
+          .filter(p => p.productName && Number(p.qty) > 0)
+          .map(p => ({
+            warehouse: editingLog.warehouse,
+            categoryKey: p.categoryKey,
+            productName: p.productName,
+            delta: Number(p.qty), // positive = put back
+            condition: NEW_USED_CATEGORIES.includes(p.categoryKey) ? (p.condition||"new") : "new",
+          }));
+        if (reverseRows.length > 0) await adjustStockAtomic(reverseRows);
+
+        // Step 2: Apply NEW stock deductions
+        const newRows = logProducts
+          .filter(p => p.productName && Number(p.qty) > 0)
+          .map(p => ({
+            warehouse: logWarehouse,
+            categoryKey: p.categoryKey,
+            productName: p.productName,
+            delta: -Number(p.qty),
+            condition: NEW_USED_CATEGORIES.includes(p.categoryKey) ? (p.condition||"new") : "new",
+          }));
+        if (newRows.length > 0) await adjustStockAtomic(newRows);
+
+        // Step 3: Update the log record in DB
+        const { error } = await supabase.from("logs").update({
+          date: serviceDate,
+          customer: selectedCustomer,
+          warehouse: logWarehouse,
+          products: logProducts,
+          notes: logNotes || null,
+          technician: logTechnician || null,
+        }).eq("id", editingLog.id);
+        if (error) throw error;
+
+        // Step 4: Update local logs state
+        const updatedLog = {
+          ...editingLog,
+          date: serviceDate,
+          customer: selectedCustomer,
+          warehouse: logWarehouse,
+          products: JSON.stringify(logProducts),
+          notes: logNotes,
+          technician: logTechnician,
+        };
+        setLogs(ls => ls.map(l => l.id === editingLog.id ? updatedLog : l));
+
+        // Step 5: Refresh stock from DB to get authoritative values
+        await fetchData();
+
+        setSyncStatus("synced");
+        setEditingLog(null);
+        setSelectedCustomer(""); setLogProducts([{...emptyProduct}]); setLogNotes(""); setLogTechnician("");
+        setShowLogForm(false);
+        alert("✓ Log updated successfully. Stock has been adjusted.");
+      } catch (err) {
+        setSyncStatus("error");
+        alert("⚠ Update Failed! Stock may be in an inconsistent state — please refresh and verify.\n\n" + (err?.message||""));
+      }
+      setSaving(false);
+    })();
   }
 
   function submitLog() {
@@ -963,6 +1131,9 @@ export default function App() {
       const reserveKey = `${p.categoryKey}|${p.productName}|${condKey}`;
       const alreadyReserved = reservedQty[reserveKey] || 0;
       const available = (isNewUsed ? getConditionQty(p.categoryKey, p.productName, logWarehouse, condKey) : getStockQty(p.categoryKey, p.productName, logWarehouse)) - alreadyReserved;
+      if (!p.qty || Number(p.qty) <= 0) {
+        errors.push(`${p.productName}: Quantity must be greater than 0.`);
+      }
       if (Number(p.qty) > available) {
         const cat = CATEGORIES[p.categoryKey];
         const condLabel = isNewUsed ? ` (${condKey==="used"?"Used":"New"})` : "";
@@ -1048,7 +1219,14 @@ export default function App() {
   }
 
   function submitStock() {
-    if (!stockForm.qty || Number(stockForm.qty)<=0) return;
+    if (!stockForm.productName || !stockForm.productName.trim()) {
+      alert("⚠ Please select a product before saving.");
+      return;
+    }
+    if (!stockForm.qty || Number(stockForm.qty)<=0) {
+      alert("⚠ Please enter a valid quantity greater than 0.");
+      return;
+    }
     const cat = CATEGORIES[stockForm.categoryKey];
     const addQty = Number(stockForm.qty);
     const isNewUsed = NEW_USED_CATEGORIES.includes(stockForm.categoryKey);
@@ -1288,6 +1466,95 @@ export default function App() {
     setCustomerForm({ ...emptyCustomer }); setShowCustomerForm(false);
   }
 
+  // Delete a service log entry (admin only) — also reverses the stock deduction
+  async function deleteLog(log) {
+    const products = (() => { try { return JSON.parse(log.products||"[]"); } catch { return []; } })();
+    const productSummary = products.map(p => `${p.productName||"(blank)"} × ${Number(p.qty)||0}`).join(", ");
+    const confirmed = confirm(
+      `⚠ Delete this service log?\n\nDate: ${formatDate(log.date)}\nCustomer: ${log.customer}\nProducts: ${productSummary}\n\nThis will also RESTORE the stock that was deducted. This cannot be undone.`
+    );
+    if (!confirmed) return;
+    setSyncStatus("saving"); setSaving(true);
+    try {
+      // Delete from DB first
+      const { error } = await supabase.from("logs").delete().eq("id", log.id);
+      if (error) throw error;
+      // Restore stock for each product (reverse the deduction)
+      const validProducts = products.filter(p => p.productName && Number(p.qty) > 0);
+      if (validProducts.length > 0) {
+        const deltaRows = validProducts.map(p => ({
+          warehouse: log.warehouse,
+          categoryKey: p.categoryKey,
+          productName: p.productName,
+          delta: Number(p.qty), // positive = restore
+          condition: NEW_USED_CATEGORIES.includes(p.categoryKey) ? (p.condition||"new") : "new",
+        }));
+        try {
+          const results = await adjustStockAtomic(deltaRows);
+          // Update local stock state
+          setStock(prev => {
+            const updated = JSON.parse(JSON.stringify(prev));
+            results.forEach(r => {
+              if (!updated[log.warehouse]) updated[log.warehouse] = {};
+              if (!updated[log.warehouse][r.categoryKey]) updated[log.warehouse][r.categoryKey] = {};
+              updated[log.warehouse][r.categoryKey][r.productName] = r.newQty;
+            });
+            return updated;
+          });
+        } catch {
+          // Stock restore failed — log still deleted, warn admin
+          alert("⚠ Log deleted but stock could not be automatically restored. Please check stock levels manually.");
+        }
+      }
+      // Remove from local logs state
+      setLogs(ls => ls.filter(l => l.id !== log.id));
+      setSyncStatus("synced");
+    } catch (err) {
+      setSyncStatus("error");
+      alert("⚠ Delete Failed!\n\n" + (err?.message||""));
+    }
+    setSaving(false);
+  }
+
+  // Delete a blank/corrupt stock entry (admin only)
+  async function deleteBlankStockEntry(warehouse, categoryKey, productName) {
+    const displayName = productName || "(blank name)";
+    const confirmed = confirm(
+      `⚠ Delete this corrupt stock entry?\n\nWarehouse: ${warehouse}\nCategory: ${categoryKey}\nProduct: "${displayName}"\n\nThis removes the entry from stock. Cannot be undone.`
+    );
+    if (!confirmed) return;
+    setSyncStatus("saving"); setSaving(true);
+    try {
+      const { error } = await supabase.from("stock")
+        .delete()
+        .eq("warehouse", warehouse)
+        .eq("category_key", categoryKey)
+        .eq("product_name", productName);
+      if (error) throw error;
+      // Remove from local stock state
+      setStock(prev => {
+        const updated = JSON.parse(JSON.stringify(prev));
+        if (updated[warehouse]?.[categoryKey]) {
+          delete updated[warehouse][categoryKey][productName];
+        }
+        return updated;
+      });
+      setStockByCondition(prev => {
+        const updated = JSON.parse(JSON.stringify(prev));
+        if (updated[warehouse]?.[categoryKey]) {
+          delete updated[warehouse][categoryKey][productName];
+        }
+        return updated;
+      });
+      setSyncStatus("synced");
+      alert(`✓ Deleted corrupt entry "${displayName}" from ${warehouse}.`);
+    } catch (err) {
+      setSyncStatus("error");
+      alert("⚠ Delete Failed!\n\n" + (err?.message||""));
+    }
+    setSaving(false);
+  }
+
   const syncColor = syncStatus==="synced"?"#c9a84c":syncStatus==="saving"?"#facc15":"#ef4444";
   const syncLabel = syncStatus==="synced"?"✓ Synced":syncStatus==="saving"?"⟳ Saving...":"✕ Sync Error";
   const lastRefreshStr = lastRefresh ? lastRefresh.toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit",second:"2-digit"}) : "";
@@ -1442,7 +1709,7 @@ export default function App() {
               <div className="card" style={{ overflow:"auto" }}>
                 <table style={{ width:"100%", borderCollapse:"collapse", minWidth:700 }}>
                   <thead style={{ background:"#0a0800", borderBottom:"1px solid #3a2e10" }}>
-                    <tr><th>S.No</th><th>Date</th><th>Warehouse</th><th>Customer</th><th>Technician</th><th>Products Given</th></tr>
+                    <tr><th>S.No</th><th>Date</th><th>Warehouse</th><th>Customer</th><th>Technician</th><th>Products Given</th>{isAdmin && <th>Action</th>}</tr>
                   </thead>
                   <tbody>
                     {paginatedLogs.length===0 && <tr><td colSpan={6} style={{ textAlign:"center", padding:30, color:"#5a4a20" }}>No records found.</td></tr>}
@@ -1451,14 +1718,17 @@ export default function App() {
                       try { productList = JSON.parse(l.products||"[]"); } catch {}
                       const grouped = {};
                       productList.forEach(p => { if (!grouped[p.categoryKey]) grouped[p.categoryKey]=[]; grouped[p.categoryKey].push(p); });
+                      // Detect broken entries: any product with blank name or zero qty
+                      const hasBrokenEntry = productList.some(p => !p.productName || !p.productName.trim() || !p.qty || Number(p.qty)<=0);
                       return (
-                        <tr key={l.id||i}>
+                        <tr key={l.id||i} style={{ background: hasBrokenEntry ? "#1a0a0a" : undefined }}>
                           <td style={{ color:"#5a4a20" }}>{(logPage-1)*LOG_PAGE_SIZE+i+1}</td>
                           <td style={{ color:"#d4b96a", whiteSpace:"nowrap" }}>{formatDate(l.date)}</td>
                           <td><span className="wh-badge">{l.warehouse||"—"}</span></td>
                           <td style={{ fontWeight:600, color:"#f5e6b0" }}>{l.customer}</td>
                           <td style={{ color:"#a78bfa" }}>{l.technician||"—"}</td>
                           <td>
+                            {hasBrokenEntry && <div style={{ fontSize:10, color:"#f87171", background:"#2d1515", border:"1px solid #ef444440", borderRadius:4, padding:"2px 8px", marginBottom:3, display:"inline-block" }}>⚠ Broken entry — delete and re-log</div>}
                             {Object.entries(grouped).map(([catKey,prods]) => {
                               const cat = (CATEGORIES as any)[catKey];
                               const prodList = prods as any[];
@@ -1467,7 +1737,9 @@ export default function App() {
                                   <span style={{ fontWeight:700, color:"#c9a84c" }}>{cat?.icon} {cat?.label}: </span>
                                   {prodList.map((p:any,pi:number) => (
                                     <span key={pi}>
-                                      <span style={{ color:"#f0e6c0", marginRight:4 }}>{p.productName}{p.condition && (p.categoryKey==="AROMA_DIFFUSER"||p.categoryKey==="AEROSOL_DISPENSER") && <span style={{ color:p.condition==="used"?"#a78bfa":"#4ade80", fontSize:10 }}> [{p.condition==="used"?"Used":"New"}]</span>} × {p.qty} {cat?.unit}</span>
+                                      <span style={{ color: (!p.productName||!p.qty||Number(p.qty)<=0) ? "#f87171" : "#f0e6c0", marginRight:4 }}>
+                                        {p.productName||"⚠ BLANK NAME"}{p.condition && (p.categoryKey==="AROMA_DIFFUSER"||p.categoryKey==="AEROSOL_DISPENSER") && <span style={{ color:p.condition==="used"?"#a78bfa":"#4ade80", fontSize:10 }}> [{p.condition==="used"?"Used":"New"}]</span>} × {Number(p.qty)||"⚠ 0"} {cat?.unit}
+                                      </span>
                                       {p.machineCodes && p.machineCodes.length > 0 && p.machineCodes.some((c:any)=>c) && (
                                         <span style={{ color:"#7ec8e3", fontSize:10 }}>[Codes: {p.machineCodes.filter((c:any)=>c).join(", ")}]</span>
                                       )}
@@ -1478,6 +1750,14 @@ export default function App() {
                               );
                             })}
                           </td>
+                          {isAdmin && (
+                            <td style={{ whiteSpace:"nowrap" }}>
+                              <div style={{ display:"flex", gap:4, flexWrap:"nowrap" }}>
+                                <button className="btn btn-outline" style={{ fontSize:10, padding:"3px 8px" }} onClick={()=>openEditLog(l)} disabled={saving}>✎ Edit</button>
+                                <button className="btn btn-danger" style={{ fontSize:10, padding:"3px 8px" }} onClick={()=>deleteLog(l)} disabled={saving}>🗑 Del</button>
+                              </div>
+                            </td>
+                          )}
                         </tr>
                       );
                     })}
@@ -1607,15 +1887,18 @@ export default function App() {
                   </thead>
                   <tbody>
                     {paginatedLowStock.length===0 && <tr><td colSpan={5} style={{ textAlign:"center", padding:20, color:"#4ade80" }}>✅ All items sufficiently stocked!</td></tr>}
-                    {paginatedLowStock.map((item,i) => (
-                      <tr key={item.name+i}>
-                        <td style={{ color:"#5a4a20" }}>{(lowStockPage-1)*LOW_STOCK_PAGE_SIZE+i+1}</td>
-                        <td style={{ color:"#c9a84c" }}>{item.category}</td>
-                        <td style={{ fontWeight:600, color:"#f5e6b0" }}>{item.name}</td>
-                        <td style={{ color:"#ef4444", fontWeight:700 }}>{item.qty}</td>
-                        <td style={{ color:"#7a6a30" }}>{item.unit}</td>
-                      </tr>
-                    ))}
+                    {paginatedLowStock.map((item,i) => {
+                      const isBlank = !item.name || !item.name.trim();
+                      return (
+                        <tr key={(item.name||"blank")+i} style={{ background: isBlank ? "#1a0a0a" : undefined }}>
+                          <td style={{ color:"#5a4a20" }}>{(lowStockPage-1)*LOW_STOCK_PAGE_SIZE+i+1}</td>
+                          <td style={{ color:"#c9a84c" }}>{item.category}</td>
+                          <td style={{ fontWeight:600, color: isBlank ? "#f87171" : "#f5e6b0" }}>{isBlank ? "⚠ BLANK NAME" : item.name}</td>
+                          <td style={{ color:"#ef4444", fontWeight:700 }}>{item.qty}</td>
+                          <td style={{ color:"#7a6a30" }}>{item.unit}</td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -1660,18 +1943,26 @@ export default function App() {
                   </thead>
                   <tbody>
                     {displayedPureOils.length===0 && <tr><td colSpan={4} style={{ textAlign:"center", padding:20, color:"#5a4a20" }}>No oils found.</td></tr>}
-                    {displayedPureOils.map((item,i) => (
-                      <tr key={item.name}>
-                        <td style={{ color:"#5a4a20" }}>{i+1}</td>
-                        <td style={{ fontWeight:600, color:"#f5e6b0" }}>{item.name}</td>
-                        <td style={{ fontWeight:700, color:item.isLow?"#ef4444":"#86efac" }}>{item.qty} Ltrs</td>
-                        <td>
-                          {item.isLow
-                            ? <span className="pulse" style={{ fontSize:9, background:"#2d0f0f", color:"#f87171", border:"1px solid #ef444440", borderRadius:20, padding:"2px 8px", fontWeight:700 }}>LOW STOCK</span>
-                            : <span style={{ fontSize:9, background:"#0f2d1a", color:"#86efac", border:"1px solid #86efac40", borderRadius:20, padding:"2px 8px", fontWeight:700 }}>OK</span>}
-                        </td>
-                      </tr>
-                    ))}
+                    {displayedPureOils.map((item,i) => {
+                      const isBlank = !item.name || !item.name.trim();
+                      return (
+                        <tr key={item.name||("blank-"+i)} style={{ background: isBlank ? "#1a0a0a" : undefined }}>
+                          <td style={{ color:"#5a4a20" }}>{i+1}</td>
+                          <td style={{ fontWeight:600, color: isBlank ? "#f87171" : "#f5e6b0" }}>
+                            {isBlank ? "⚠ BLANK NAME — corrupt entry" : item.name}
+                          </td>
+                          <td style={{ fontWeight:700, color:item.isLow?"#ef4444":"#86efac" }}>{item.qty} Ltrs</td>
+                          <td>
+                            {isBlank
+                              ? <span style={{ fontSize:9, background:"#2d1515", color:"#f87171", border:"1px solid #ef444440", borderRadius:20, padding:"2px 8px", fontWeight:700 }}>CORRUPT</span>
+                              : item.isLow
+                                ? <span className="pulse" style={{ fontSize:9, background:"#2d0f0f", color:"#f87171", border:"1px solid #ef444440", borderRadius:20, padding:"2px 8px", fontWeight:700 }}>LOW STOCK</span>
+                                : <span style={{ fontSize:9, background:"#0f2d1a", color:"#86efac", border:"1px solid #86efac40", borderRadius:20, padding:"2px 8px", fontWeight:700 }}>OK</span>}
+                          </td>
+                          {isAdmin && isBlank && <td><button className="btn btn-danger" style={{ fontSize:10, padding:"3px 8px" }} onClick={()=>deleteBlankStockEntry(stockFilterWarehouse,"PURE_OIL",item.name)} disabled={saving}>🗑 Delete</button></td>}
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -1704,24 +1995,31 @@ export default function App() {
               <div className="card" style={{ overflow:"auto" }}>
                 <table style={{ width:"100%", borderCollapse:"collapse" }}>
                   <thead style={{ background:"#0a0800", borderBottom:"1px solid #3a2e10" }}>
-                    <tr><th>#</th><th>Product Name</th><th>Stock</th><th>Status</th></tr>
+                    <tr><th>#</th><th>Product Name</th><th>Stock</th><th>Status</th>{isAdmin && <th>Action</th>}</tr>
                   </thead>
                   <tbody>
                     {displayedFinishedAromaOils.length===0 && <tr><td colSpan={4} style={{ textAlign:"center", padding:20, color:"#5a4a20" }}>No Finished Aroma Oils found.</td></tr>}
-                    {displayedFinishedAromaOils.map((item,i) => (
-                      <tr key={item.name}>
-                        <td style={{ color:"#5a4a20" }}>{i+1}</td>
-                        <td style={{ fontWeight:600, color:"#f5e6b0" }}>{item.name}</td>
-                        <td style={{ fontWeight:700, color:item.isLow?"#ef4444":"#86efac" }}>{item.qty} Ltrs</td>
-                        <td>
-                          {finishedAromaWarehouse === "Head Office"
-                            ? item.isLow
-                              ? <span className="pulse" style={{ fontSize:9, background:"#2d0f0f", color:"#f87171", border:"1px solid #ef444440", borderRadius:20, padding:"2px 8px", fontWeight:700 }}>LOW STOCK</span>
-                              : <span style={{ fontSize:9, background:"#0f2d1a", color:"#86efac", border:"1px solid #86efac40", borderRadius:20, padding:"2px 8px", fontWeight:700 }}>OK</span>
-                            : <span style={{ fontSize:10, color:"#5a4a20" }}>—</span>}
-                        </td>
-                      </tr>
-                    ))}
+                    {displayedFinishedAromaOils.map((item,i) => {
+                      const isBlank = !item.name || !item.name.trim();
+                      return (
+                        <tr key={item.name||("blank-"+i)} style={{ background: isBlank ? "#1a0a0a" : undefined }}>
+                          <td style={{ color:"#5a4a20" }}>{i+1}</td>
+                          <td style={{ fontWeight:600, color: isBlank ? "#f87171" : "#f5e6b0" }}>
+                            {isBlank ? "⚠ BLANK NAME — corrupt entry" : item.name}
+                          </td>
+                          <td style={{ fontWeight:700, color:item.isLow?"#ef4444":"#86efac" }}>{item.qty} Ltrs</td>
+                          <td>
+                            {isBlank ? <span style={{ fontSize:9, background:"#2d1515", color:"#f87171", border:"1px solid #ef444440", borderRadius:20, padding:"2px 8px", fontWeight:700 }}>CORRUPT</span>
+                              : finishedAromaWarehouse === "Head Office"
+                                ? item.isLow
+                                  ? <span className="pulse" style={{ fontSize:9, background:"#2d0f0f", color:"#f87171", border:"1px solid #ef444440", borderRadius:20, padding:"2px 8px", fontWeight:700 }}>LOW STOCK</span>
+                                  : <span style={{ fontSize:9, background:"#0f2d1a", color:"#86efac", border:"1px solid #86efac40", borderRadius:20, padding:"2px 8px", fontWeight:700 }}>OK</span>
+                                : <span style={{ fontSize:10, color:"#5a4a20" }}>—</span>}
+                          </td>
+                          {isAdmin && <td>{isBlank && <button className="btn btn-danger" style={{ fontSize:10, padding:"3px 8px" }} onClick={()=>deleteBlankStockEntry(finishedAromaWarehouse,"FINISHED_AROMA_OIL",item.name)} disabled={saving}>🗑 Delete</button>}</td>}
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -1834,7 +2132,14 @@ export default function App() {
       {showLogForm && (
         <div onClick={()=>setShowLogForm(false)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:100, backdropFilter:"blur(4px)" }}>
           <div className="card slide-in" onClick={e=>e.stopPropagation()} style={{ width:"100%", maxWidth:660, margin:16, padding:24, maxHeight:"92vh", overflowY:"auto", background:"#0a0800", border:"1px solid #c9a84c" }}>
-            <div style={{ fontWeight:700, fontSize:17, marginBottom:18, color:"#f5d060" }}>📋 Log Service Visit</div>
+            <div style={{ fontWeight:700, fontSize:17, marginBottom:18, color:"#f5d060" }}>{editingLog ? "✎ Edit Service Log" : "📋 Log Service Visit"}</div>
+            {editingLog && (
+              <div style={{ background:"#1a1200", border:"1px solid #facc1560", borderRadius:8, padding:"10px 14px", fontSize:11, color:"#facc15", marginBottom:4 }}>
+                ✎ <strong>Edit Mode</strong> — You can fix any product, qty, or machine code below.
+                The available stock shown already accounts for what this log previously deducted.
+                On save, old stock deductions are reversed and new ones applied automatically.
+              </div>
+            )}
             <div style={{ display:"grid", gap:12 }}>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:12 }}>
                 <div>
@@ -1895,10 +2200,15 @@ export default function App() {
                         <input type="number" min="0" step="0.01" value={p.qty} onChange={e=>updateLogProduct(i,"qty",e.target.value)}
                           style={{ borderColor:Number(p.qty)>getLogRowAvailability(i)?"#ef4444":"#3a2e10" }} />
                         <div style={{ fontSize:9, marginTop:2, color:Number(p.qty)>getLogRowAvailability(i)?"#ef4444":"#7a6a30" }}>
-                          Avail: {getLogRowAvailability(i)} {SERVICE_PRODUCT_TYPES.find(t=>t.key===p.categoryKey)?.unit}
+                          {editingLog ? "Avail (after reversal):" : "Avail:"} {getLogRowAvailability(i)} {SERVICE_PRODUCT_TYPES.find(t=>t.key===p.categoryKey)?.unit}
                         </div>
                       </div>
                     </div>
+                    {needsMachineCode(p.categoryKey, p.productName) && (!p.qty || Number(p.qty)<=0) && (
+                        <div style={{ fontSize:10, color:"#facc15", background:"#1a1200", border:"1px solid #facc1540", borderRadius:6, padding:"4px 8px", marginTop:4 }}>
+                          ⚠ Enter quantity above to show machine code fields
+                        </div>
+                      )}
                     {needsMachineCode(p.categoryKey, p.productName) && Number(p.qty)>0 && (
                       <div style={{ marginTop:10, background:"#0a0800", border:"1px solid #3a2e10", borderRadius:8, padding:"10px 12px" }}>
                         <div style={{ fontSize:10, color:"#c9a84c", fontWeight:700, marginBottom:6, textTransform:"uppercase" }}>🔧 Machine Codes ({p.productName}) — 9 characters required</div>
@@ -1928,8 +2238,8 @@ export default function App() {
               <div><label>Notes (optional)</label><textarea value={logNotes} onChange={e=>setLogNotes(e.target.value)} placeholder="Any notes..." rows={2} style={{ resize:"vertical" }} /></div>
             </div>
             <div style={{ display:"flex", gap:10, marginTop:18, justifyContent:"flex-end" }}>
-              <button className="btn btn-outline" onClick={()=>setShowLogForm(false)}>Cancel</button>
-              <button className="btn btn-gold" onClick={submitLog} disabled={saving}>{saving?"Saving...":"Save Service Log"}</button>
+              <button className="btn btn-outline" onClick={()=>{ setShowLogForm(false); setEditingLog(null); setSelectedCustomer(""); setLogProducts([{...emptyProduct}]); setLogNotes(""); setLogTechnician(""); }}>Cancel</button>
+              <button className="btn btn-gold" onClick={editingLog ? submitEditLog : submitLog} disabled={saving}>{saving ? "Saving..." : editingLog ? "✓ Save Changes" : "Save Service Log"}</button>
             </div>
           </div>
         </div>
@@ -1975,14 +2285,20 @@ export default function App() {
                 <div><label>Date Received</label><input type="date" value={stockForm.dateReceived} onChange={e=>setStockForm(f=>({...f,dateReceived:e.target.value}))} /></div>
               </div>
               <div><label>Vendor Name</label><input value={stockForm.vendor} onChange={e=>setStockForm(f=>({...f,vendor:e.target.value}))} placeholder="Supplier / Vendor name..." /></div>
-              <div style={{ background:"#1a1500", border:"1px solid #3a2e10", borderRadius:8, padding:"10px 14px", fontSize:12, color:"#c9a84c" }}>
-                Current: <strong style={{ color:"#f5d060" }}>{(NEW_USED_CATEGORIES.includes(stockForm.categoryKey)?getConditionQty(stockForm.categoryKey,stockForm.productName,stockForm.warehouse,stockForm.condition||"new"):getStockQty(stockForm.categoryKey,stockForm.productName,stockForm.warehouse))} {CATEGORIES[stockForm.categoryKey]?.unit}</strong>
-                {" → "}After: <strong style={{ color:"#4ade80" }}>{(NEW_USED_CATEGORIES.includes(stockForm.categoryKey)?getConditionQty(stockForm.categoryKey,stockForm.productName,stockForm.warehouse,stockForm.condition||"new"):getStockQty(stockForm.categoryKey,stockForm.productName,stockForm.warehouse))+Number(stockForm.qty||0)} {CATEGORIES[stockForm.categoryKey]?.unit}</strong>
-              </div>
+              {!stockForm.productName.trim() ? (
+                <div style={{ background:"#2d1515", border:"1px solid #ef444440", borderRadius:8, padding:"10px 14px", fontSize:12, color:"#f87171" }}>
+                  ⚠ Please select a product from the list above before saving.
+                </div>
+              ) : (
+                <div style={{ background:"#1a1500", border:"1px solid #3a2e10", borderRadius:8, padding:"10px 14px", fontSize:12, color:"#c9a84c" }}>
+                  <strong style={{ color:"#f5e6b0" }}>{stockForm.productName}</strong> — Current: <strong style={{ color:"#f5d060" }}>{(NEW_USED_CATEGORIES.includes(stockForm.categoryKey)?getConditionQty(stockForm.categoryKey,stockForm.productName,stockForm.warehouse,stockForm.condition||"new"):getStockQty(stockForm.categoryKey,stockForm.productName,stockForm.warehouse))} {CATEGORIES[stockForm.categoryKey]?.unit}</strong>
+                  {" → "}After: <strong style={{ color:"#4ade80" }}>{(NEW_USED_CATEGORIES.includes(stockForm.categoryKey)?getConditionQty(stockForm.categoryKey,stockForm.productName,stockForm.warehouse,stockForm.condition||"new"):getStockQty(stockForm.categoryKey,stockForm.productName,stockForm.warehouse))+Number(stockForm.qty||0)} {CATEGORIES[stockForm.categoryKey]?.unit}</strong>
+                </div>
+              )}
             </div>
             <div style={{ display:"flex", gap:10, marginTop:18, justifyContent:"flex-end" }}>
               <button className="btn btn-outline" onClick={()=>setShowStockForm(false)}>Cancel</button>
-              <button className="btn btn-gold" onClick={submitStock} disabled={saving}>{saving?"Saving...":"Add to Stock"}</button>
+              <button className="btn btn-gold" onClick={submitStock} disabled={saving || !stockForm.productName.trim()}>{saving?"Saving...":"Add to Stock"}</button>
             </div>
           </div>
         </div>
