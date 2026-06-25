@@ -1334,7 +1334,7 @@ export default function App() {
         @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
         .product-card{background:#1a1500;border:1px solid #3a2e10;border-radius:10px;padding:14px;margin-bottom:10px}
         th{color:#c9a84c !important;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;padding:6px 10px;text-align:left;white-space:nowrap}
-        td{padding:5px 10px !important;font-size:11px;border-bottom:1px solid #2a2000;color:#f0e6c0}
+        td{padding:5px 10px !important;font-size:11px;border-bottom:1px solid #2a2000;color:#f0e6c0;vertical-align:top}
         tr:last-child td{border-bottom:none}
         tr:hover td{background:#1a1500}
         .stock-box{background:#0f0e00;border:1px solid #3a2e10;border-radius:12px;padding:16px}
@@ -1351,7 +1351,9 @@ export default function App() {
       <div style={{ background:"linear-gradient(135deg,#0a0800,#1a1400,#0a0800)", borderBottom:"2px solid #c9a84c", padding:"8px 16px", display:"flex", alignItems:"center", justifyContent:"space-between", gap:8 }}>
         {/* LEFT — logo + title only */}
         <div style={{ display:"flex", alignItems:"center", gap:14, flexShrink:0 }}>
-          <img src="data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX1BST0ZJTEUAAQEAAAHIAAAAAAQwAABtbnRyUkdCIFhZWiAH4AABAAEAAAAAAABhY3NwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAA9tYAAQAAAADTLQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAlkZXNjAAAA8AAAACRyWFlaAAABFAAAABRnWFlaAAABKAAAABRiWFlaAAABPAAAABR3dHB0AAABUAAAABRyVFJDAAABZAAAAChnVFJDAAABZAAAAChiVFJDAAABZAAAAChjcHJ0AAABjAAAADxtbHVjAAAAAAAAAAEAAAAMZW5VUwAAAAgAAAAcAHMAUgBHAEJYWVogAAAAAAAAb6IAADj1AAADkFhZWiAAAAAAAABimQAAt4UAABjaWFlaIAAAAAAAACSgAAAPhAAAts9YWVogAAAAAAAA9tYAAQAAAADTLXBhcmEAAAAAAAQAAAACZmYAAPKnAAANWQAAE9AAAApbAAAAAAAAAABtbHVjAAAAAAAAAAEAAAAMZW5VUwAAACAAAAAcAEcAbwBvAGcAbABlACAASQBuAGMALgAgADIAMAAxADb/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/wAARCABAAEADASIAAhEBAxEB/8QAGwABAAMBAQEBAAAAAAAAAAAAAAQFBgMHAgH/xAAuEAABBAEDAwMDBAMBAAAAAAABAAIDBAUREiExBhNBUWEiMnGBFCORoVL/xAAUAQEAAAAAAAAAAAAAAAAAAAAA/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAwDAQACEQMRAD8A7NERERERERERERERET0REREREREREREREREQEREREREREREREREREREREREREQERERERERERERF//Z" alt="SC" style={{ width:44, height:44, objectFit:"contain" }} />
+          <div style={{ width:44, height:44, display:"flex", alignItems:"center", justifyContent:"center", background:"linear-gradient(135deg,#1a1200,#0a0800)", border:"1px solid #c9a84c", borderRadius:10, flexShrink:0 }}>
+            <span style={{ fontSize:18, fontWeight:900, background:"linear-gradient(135deg,#f5d060,#c9a84c)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent", letterSpacing:1 }}>SC</span>
+          </div>
           <div>
             <div style={{ fontSize:14, fontWeight:800, background:"linear-gradient(135deg,#f5d060,#c9a84c,#f5d060)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent", letterSpacing:2, textTransform:"uppercase" }}>Scentscircle Warehouse Stock</div>
             <div style={{ fontSize:9, color:"#c9a84c", marginTop:1, fontWeight:500, letterSpacing:1.5, textTransform:"uppercase", opacity:0.8 }}>UAE Warehouse</div>
@@ -1461,7 +1463,7 @@ export default function App() {
                               const cat = (CATEGORIES as any)[catKey];
                               const prodList = prods as any[];
                               return (
-                                <div key={catKey} style={{ marginBottom:2 }}>
+                                <div key={catKey} style={{ marginBottom:1 }}>
                                   <span style={{ fontWeight:700, color:"#c9a84c" }}>{cat?.icon} {cat?.label}: </span>
                                   {prodList.map((p:any,pi:number) => (
                                     <span key={pi}>
