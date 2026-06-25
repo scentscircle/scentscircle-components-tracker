@@ -2257,10 +2257,9 @@ export default function App() {
                 <label>Product</label>
                 {(()=>{ const prods=stockForm.categoryKey==="FINISHED_AROMA_OIL"?getFinishedAromaOilProducts(stockForm.warehouse):getAllProducts(stockForm.categoryKey); return prods.length>0?(
                   <div style={{ position:"relative" }}>
-                    <input placeholder="🔍 Type to search products..." value={stockForm.productName ? stockForm.productName : stockProductSearch}
-                      onFocus={()=>{ if(stockForm.productName){ setStockProductSearch(""); setStockForm(f=>({...f,productName:""})); } }}
+                    <input placeholder="🔍 Type to search products..." value={stockForm.productName || stockProductSearch}
                       onChange={e=>{ setStockProductSearch(e.target.value); setStockForm(f=>({...f,productName:""})); }} />
-                    {!stockForm.productName && (
+                    {(!stockForm.productName || stockProductSearch) && (
                       <div style={{ position:"absolute", top:"110%", left:0, right:0, background:"#1a1500", border:"1px solid #c9a84c", borderRadius:8, maxHeight:200, overflowY:"auto", zIndex:50 }}>
                         {prods.filter(p=>p.toLowerCase().includes(stockProductSearch.toLowerCase())).slice(0,30).map(p=>(
                           <div key={p} onClick={()=>{ setStockForm(f=>({...f,productName:p})); setStockProductSearch(""); }}
@@ -2322,10 +2321,9 @@ export default function App() {
                 <label>{CATEGORIES[returnForm.categoryKey]?.label || "Product"}</label>
                 {(()=>{ const prods = returnForm.categoryKey==="FINISHED_AROMA_OIL" ? getFinishedAromaOilProducts(returnForm.warehouse) : getAllProducts(returnForm.categoryKey); return prods.length>0?(
                   <div style={{ position:"relative" }}>
-                    <input placeholder="🔍 Type to search products..." value={returnForm.productName ? returnForm.productName : returnProductSearch}
-                      onFocus={()=>{ if(returnForm.productName){ setReturnProductSearch(""); setReturnForm(f=>({...f,productName:""})); } }}
+                    <input placeholder="🔍 Type to search products..." value={returnForm.productName || returnProductSearch}
                       onChange={e=>{ setReturnProductSearch(e.target.value); setReturnForm(f=>({...f,productName:""})); }} />
-                    {!returnForm.productName && (
+                    {(!returnForm.productName || returnProductSearch) && (
                       <div style={{ position:"absolute", top:"110%", left:0, right:0, background:"#1a1500", border:"1px solid #c9a84c", borderRadius:8, maxHeight:200, overflowY:"auto", zIndex:50 }}>
                         {prods.filter(p=>p.toLowerCase().includes(returnProductSearch.toLowerCase())).slice(0,30).map(p=>(
                           <div key={p} onClick={()=>{ setReturnForm(f=>({...f,productName:p,machineCodes:[]})); setReturnProductSearch(""); }}
