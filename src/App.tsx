@@ -2130,7 +2130,7 @@ export default function App() {
 
       {/* LOG SERVICE MODAL */}
       {showLogForm && (
-        <div onClick={()=>setShowLogForm(false)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:100, backdropFilter:"blur(4px)" }}>
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:100, backdropFilter:"blur(4px)" }}>
           <div className="card slide-in" onClick={e=>e.stopPropagation()} style={{ width:"100%", maxWidth:660, margin:16, padding:24, maxHeight:"92vh", overflowY:"auto", background:"#0a0800", border:"1px solid #c9a84c" }}>
             <div style={{ fontWeight:700, fontSize:17, marginBottom:18, color:"#f5d060" }}>{editingLog ? "✎ Edit Service Log" : "📋 Log Service Visit"}</div>
             {editingLog && (
@@ -2247,7 +2247,7 @@ export default function App() {
 
       {/* ADD STOCK MODAL */}
       {showStockForm && (
-        <div onClick={()=>setShowStockForm(false)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:100, backdropFilter:"blur(4px)" }}>
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:100, backdropFilter:"blur(4px)" }}>
           <div className="card slide-in" onClick={e=>e.stopPropagation()} style={{ width:"100%", maxWidth:500, margin:16, padding:24, background:"#0a0800", border:"1px solid #c9a84c" }}>
             <div style={{ fontWeight:700, fontSize:17, marginBottom:18, color:"#f5d060" }}>📦 Add Stock Purchase</div>
             <div style={{ display:"grid", gap:12 }}>
@@ -2305,7 +2305,7 @@ export default function App() {
 
       {/* RETURN MODAL */}
       {showReturnForm && (
-        <div onClick={()=>setShowReturnForm(false)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:100, backdropFilter:"blur(4px)" }}>
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:100, backdropFilter:"blur(4px)" }}>
           <div className="card slide-in" onClick={e=>e.stopPropagation()} style={{ width:"100%", maxWidth:500, margin:16, padding:24, background:"#0a0800", border:"1px solid #c9a84c" }}>
             <div style={{ fontWeight:700, fontSize:17, marginBottom:18, color:"#f5d060" }}>♻️ Return Item to Stock</div>
             <div style={{ display:"grid", gap:12 }}>
@@ -2371,7 +2371,7 @@ export default function App() {
 
       {/* TRANSFER MODAL */}
       {showTransferForm && (
-        <div onClick={()=>setShowTransferForm(false)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:100, backdropFilter:"blur(4px)" }}>
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:100, backdropFilter:"blur(4px)" }}>
           <div className="card slide-in" onClick={e=>e.stopPropagation()} style={{ width:"100%", maxWidth:500, margin:16, padding:24, background:"#0a0800", border:"1px solid #3b82f6" }}>
             <div style={{ fontWeight:700, fontSize:17, marginBottom:18, color:"#60a5fa" }}>⇄ Inter-Warehouse Transfer</div>
             <div style={{ display:"grid", gap:12 }}>
@@ -2402,7 +2402,7 @@ export default function App() {
 
       {/* ADD PRODUCT MODAL */}
       {showAddProductForm && (
-        <div onClick={()=>setShowAddProductForm(false)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:100, backdropFilter:"blur(4px)" }}>
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:100, backdropFilter:"blur(4px)" }}>
           <div className="card slide-in" onClick={e=>e.stopPropagation()} style={{ width:"100%", maxWidth:420, margin:16, padding:24, background:"#0a0800", border:"1px solid #c9a84c" }}>
             <div style={{ fontWeight:700, fontSize:17, marginBottom:18, color:"#f5d060" }}>📦 Add New Product</div>
             <div style={{ display:"grid", gap:12 }}>
@@ -2429,7 +2429,7 @@ export default function App() {
 
       {/* CUSTOMER MODAL */}
       {showCustomerForm && (
-        <div onClick={()=>setShowCustomerForm(false)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:100, backdropFilter:"blur(4px)" }}>
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:100, backdropFilter:"blur(4px)" }}>
           <div className="card slide-in" onClick={e=>e.stopPropagation()} style={{ width:"100%", maxWidth:440, margin:16, padding:24, background:"#0a0800", border:"1px solid #c9a84c" }}>
             <div style={{ fontWeight:700, fontSize:17, marginBottom:18, color:"#f5d060" }}>{editCustomerId?"✎ Edit Customer":"+ Add Customer"}</div>
             <div style={{ display:"grid", gap:12 }}>
