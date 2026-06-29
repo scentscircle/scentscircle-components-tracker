@@ -553,7 +553,7 @@ export default function App() {
   const [stockForm, setStockForm] = useState({ categoryKey:"BATTERY", productName:"AA", qty:"", dateReceived:today(), vendor:"", warehouse:roleWarehouse||"Al Quoz Warehouse", condition:"new" });
 
   const [showAddProductForm, setShowAddProductForm] = useState(false);
-  const [newProductForm, setNewProductForm] = useState({ categoryKey:"BATTERY", productName:"", warehouse:roleWarehouse||"ALL" });
+  const [newProductForm, setNewProductForm] = useState({ categoryKey:"BATTERY", productName:"", warehouse:roleWarehouse||"Al Quoz Warehouse" });
 
   const [showTransferForm, setShowTransferForm] = useState(false);
   const [transferForm, setTransferForm] = useState({ fromWarehouse:"Al Quoz Warehouse", toWarehouse:"Ajman Warehouse", categoryKey:"BATTERY", productName:"AA", qty:"", date:today(), condition:"new" });
@@ -963,7 +963,7 @@ export default function App() {
         return updated;
       });
       setSyncStatus("synced");
-      setNewProductForm({ categoryKey:"BATTERY", productName:"", warehouse:"ALL" });
+      setNewProductForm({ categoryKey:"BATTERY", productName:"", warehouse: isAdmin ? "ALL" : (roleWarehouse||"Al Quoz Warehouse") });
       setShowAddProductForm(false);
     } catch (err) {
       setSyncStatus("error");
@@ -1634,7 +1634,7 @@ export default function App() {
           {tab===TABS.PURCHASE && <button className="btn btn-gold" onClick={() => setShowStockForm(true)} style={{ fontSize:12, padding:"6px 14px" }}>+ Add Stock</button>}
           {tab===TABS.TRANSFER && <button className="btn btn-transfer" onClick={() => setShowTransferForm(true)} style={{ fontSize:12, padding:"6px 14px" }}>⇄ New Transfer</button>}
           {tab===TABS.RETURNS && <button className="btn btn-gold" onClick={() => setShowReturnForm(true)} style={{ fontSize:12, padding:"6px 14px" }}>♻️ New Return</button>}
-          {tab===TABS.STOCK && <button className="btn btn-gold" onClick={() => { setNewProductForm({ categoryKey:"BATTERY", productName:"", warehouse:"ALL" }); setShowAddProductForm(true); }} style={{ fontSize:11, padding:"6px 12px" }}>+ Add Product</button>}
+          {tab===TABS.STOCK && <button className="btn btn-gold" onClick={() => { setNewProductForm({ categoryKey:"BATTERY", productName:"", warehouse: isAdmin ? "ALL" : (roleWarehouse||"Al Quoz Warehouse") }); setShowAddProductForm(true); }} style={{ fontSize:11, padding:"6px 12px" }}>+ Add Product</button>}
 
           <div className="divider" />
 
@@ -2409,10 +2409,16 @@ export default function App() {
               <div><label>Category</label><select value={newProductForm.categoryKey} onChange={e=>setNewProductForm(f=>({...f,categoryKey:e.target.value}))}>{Object.entries(CATEGORIES).map(([k,c])=><option key={k} value={k}>{c.icon} {c.label}</option>)}</select></div>
               <div><label>Product Name</label><input value={newProductForm.productName} onChange={e=>setNewProductForm(f=>({...f,productName:e.target.value}))} placeholder="e.g. AAA Premium, New Scent..." onKeyDown={e=>e.key==="Enter"&&addNewProduct()} /></div>
               <div><label>Warehouse</label>
-                <select value={newProductForm.warehouse} onChange={e=>setNewProductForm(f=>({...f,warehouse:e.target.value}))}>
-                  {isAdmin && <option value="ALL">All Warehouses</option>}
-                  {availableWarehouses.map(w=><option key={w} value={w}>{w}</option>)}
-                </select>
+                {isAdmin ? (
+                  <select value={newProductForm.warehouse} onChange={e=>setNewProductForm(f=>({...f,warehouse:e.target.value}))}>
+                    <option value="ALL">All Warehouses</option>
+                    {availableWarehouses.map(w=><option key={w} value={w}>{w}</option>)}
+                  </select>
+                ) : (
+                  <div style={{ padding:"8px 12px", background:"#1a1400", border:"1px solid #3a2e10", borderRadius:8, color:"#f5e6b0", fontSize:13 }}>
+                    🏭 {roleWarehouse} <span style={{ fontSize:10, color:"#7a6a30", marginLeft:6 }}>(your warehouse)</span>
+                  </div>
+                )}
               </div>
               <div style={{ fontSize:11, color:"#7a6a30" }}>
                 Adds <strong>{CATEGORIES[newProductForm.categoryKey]?.label}</strong> product with 0 stock in{" "}
