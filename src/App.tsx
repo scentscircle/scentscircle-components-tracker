@@ -2259,18 +2259,24 @@ export default function App() {
                   <div style={{ position:"relative" }}>
                     <input placeholder="🔍 Type to search products..." value={stockForm.productName || stockProductSearch}
                       onChange={e=>{ setStockProductSearch(e.target.value); setStockForm(f=>({...f,productName:""})); }} />
-                    {(!stockForm.productName || stockProductSearch) && (
-                      <div style={{ position:"absolute", top:"110%", left:0, right:0, background:"#1a1500", border:"1px solid #c9a84c", borderRadius:8, maxHeight:200, overflowY:"auto", zIndex:50 }}>
-                        {prods.filter(p=>p.toLowerCase().includes(stockProductSearch.toLowerCase())).slice(0,30).map(p=>(
-                          <div key={p} onClick={()=>{ setStockForm(f=>({...f,productName:p})); setStockProductSearch(""); }}
-                            style={{ padding:"8px 12px", cursor:"pointer", fontSize:12, color:"#f0e6c0", borderBottom:"1px solid #2a2000" }}
-                            onMouseEnter={e=>e.currentTarget.style.background="#2a1a00"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>{p}</div>
-                        ))}
-                        {prods.filter(p=>p.toLowerCase().includes(stockProductSearch.toLowerCase())).length===0 && (
-                          <div style={{ padding:"8px 12px", fontSize:12, color:"#5a4a20" }}>No matches found.</div>
-                        )}
-                      </div>
-                    )}
+                    {(!stockForm.productName || stockProductSearch) && (() => {
+                      const filtered = prods.filter(p=>p.toLowerCase().includes(stockProductSearch.toLowerCase()));
+                      return (
+                        <div style={{ position:"absolute", top:"110%", left:0, right:0, background:"#1a1500", border:"1px solid #c9a84c", borderRadius:8, maxHeight:240, overflowY:"auto", zIndex:50 }}>
+                          <div style={{ padding:"4px 12px", fontSize:9, color:"#7a6a30", borderBottom:"1px solid #2a2000", position:"sticky", top:0, background:"#1a1500" }}>
+                            {filtered.length} product{filtered.length!==1?"s":""} {filtered.length>10?"— scroll for more ↓":""}
+                          </div>
+                          {filtered.slice(0,50).map(p=>(
+                            <div key={p} onClick={()=>{ setStockForm(f=>({...f,productName:p})); setStockProductSearch(""); }}
+                              style={{ padding:"8px 12px", cursor:"pointer", fontSize:12, color:"#f0e6c0", borderBottom:"1px solid #2a2000" }}
+                              onMouseEnter={e=>e.currentTarget.style.background="#2a1a00"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>{p}</div>
+                          ))}
+                          {filtered.length===0 && (
+                            <div style={{ padding:"8px 12px", fontSize:12, color:"#5a4a20" }}>No matches found.</div>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 ):(
                   <input value={stockForm.productName} onChange={e=>setStockForm(f=>({...f,productName:e.target.value}))} placeholder="Enter product name" />
@@ -2323,15 +2329,22 @@ export default function App() {
                   <div style={{ position:"relative" }}>
                     <input placeholder="🔍 Type to search products..." value={returnForm.productName || returnProductSearch}
                       onChange={e=>{ setReturnProductSearch(e.target.value); setReturnForm(f=>({...f,productName:""})); }} />
-                    {(!returnForm.productName || returnProductSearch) && (
-                      <div style={{ position:"absolute", top:"110%", left:0, right:0, background:"#1a1500", border:"1px solid #c9a84c", borderRadius:8, maxHeight:200, overflowY:"auto", zIndex:50 }}>
-                        {prods.filter(p=>p.toLowerCase().includes(returnProductSearch.toLowerCase())).slice(0,30).map(p=>(
-                          <div key={p} onClick={()=>{ setReturnForm(f=>({...f,productName:p,machineCodes:[]})); setReturnProductSearch(""); }}
-                            style={{ padding:"8px 12px", cursor:"pointer", fontSize:12, color:"#f0e6c0", borderBottom:"1px solid #2a2000" }}
-                            onMouseEnter={e=>e.currentTarget.style.background="#2a1a00"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>{p}</div>
-                        ))}
-                      </div>
-                    )}
+                    {(!returnForm.productName || returnProductSearch) && (() => {
+                      const filtered = prods.filter(p=>p.toLowerCase().includes(returnProductSearch.toLowerCase()));
+                      return (
+                        <div style={{ position:"absolute", top:"110%", left:0, right:0, background:"#1a1500", border:"1px solid #c9a84c", borderRadius:8, maxHeight:240, overflowY:"auto", zIndex:50 }}>
+                          <div style={{ padding:"4px 12px", fontSize:9, color:"#7a6a30", borderBottom:"1px solid #2a2000", position:"sticky", top:0, background:"#1a1500" }}>
+                            {filtered.length} product{filtered.length!==1?"s":""} {filtered.length>10?"— scroll for more ↓":""}
+                          </div>
+                          {filtered.slice(0,50).map(p=>(
+                            <div key={p} onClick={()=>{ setReturnForm(f=>({...f,productName:p,machineCodes:[]})); setReturnProductSearch(""); }}
+                              style={{ padding:"8px 12px", cursor:"pointer", fontSize:12, color:"#f0e6c0", borderBottom:"1px solid #2a2000" }}
+                              onMouseEnter={e=>e.currentTarget.style.background="#2a1a00"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>{p}</div>
+                          ))}
+                          {filtered.length===0 && <div style={{ padding:"10px 12px", fontSize:11, color:"#7a6a30" }}>No matches found.</div>}
+                        </div>
+                      );
+                    })()}
                   </div>
                 ):(
                   <div style={{ fontSize:12, color:"#f87171", background:"#2d1515", border:"1px solid #f8717140", borderRadius:8, padding:"10px 14px" }}>No products found. Add one first via Stock → + Add Product.</div>
