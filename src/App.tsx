@@ -541,7 +541,9 @@ export default function App() {
   const [purchaseFilterWarehouse, setPurchaseFilterWarehouse] = useState(roleWarehouse||"");
 
   const [showLogForm, setShowLogForm] = useState(false);
-  const [editingLog, setEditingLog] = useState(null); // holds the original log being edited
+  const [editingLog, setEditingLog] = useState(null);
+  const [editingHistory, setEditingHistory] = useState(null); // holds purchase history row being edited
+  const [historyEditForm, setHistoryEditForm] = useState({ item:"", vendor:"", date:"", received:"" }); // holds the original log being edited
   const [selectedCustomer, setSelectedCustomer] = useState("");
   const [serviceDate, setServiceDate] = useState(today());
   const [logWarehouse, setLogWarehouse] = useState(roleWarehouse || "Al Quoz Warehouse");
@@ -1555,6 +1557,35 @@ export default function App() {
     setSaving(false);
   }
 
+  async function saveHistoryEdit() {
+    if (!historyEditForm.item.trim()) { alert("⚠ Item name cannot be blank."); return; }
+    if (!historyEditForm.received || Number(historyEditForm.received) <= 0) { alert("⚠ Received quantity must be greater than 0."); return; }
+    setSaving(true); setSyncStatus("saving");
+    try {
+      const { error } = await supabase.from("stock_history").update({
+        item: historyEditForm.item.trim(),
+        vendor: historyEditForm.vendor.trim() || null,
+        date: historyEditForm.date,
+        received: Number(historyEditForm.received),
+      }).eq("id", editingHistory.id);
+      if (error) throw error;
+      // Update local state
+      setStockHistory(h => h.map(row => row.id === editingHistory.id ? {
+        ...row,
+        item: historyEditForm.item.trim(),
+        vendor: historyEditForm.vendor.trim() || "",
+        date: historyEditForm.date,
+        received: Number(historyEditForm.received),
+      } : row));
+      setSyncStatus("synced");
+      setEditingHistory(null);
+    } catch(err) {
+      setSyncStatus("error");
+      alert("⚠ Update Failed!\n\n" + (err?.message||""));
+    }
+    setSaving(false);
+  }
+
   const syncColor = syncStatus==="synced"?"#c9a84c":syncStatus==="saving"?"#facc15":"#ef4444";
   const syncLabel = syncStatus==="synced"?"✓ Synced":syncStatus==="saving"?"⟳ Saving...":"✕ Sync Error";
   const lastRefreshStr = lastRefresh ? lastRefresh.toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit",second:"2-digit"}) : "";
@@ -2041,28 +2072,77 @@ export default function App() {
               <div className="card" style={{ overflow:"auto" }}>
                 <table style={{ width:"100%", borderCollapse:"collapse", minWidth:700 }}>
                   <thead style={{ background:"#0a0800", borderBottom:"1px solid #3a2e10" }}>
-                    <tr><th>S.No</th><th>Date</th><th>Warehouse</th><th>Category</th><th>Item</th><th>Vendor</th><th>Stock In Hand</th><th>Received</th><th>Closing</th></tr>
+                    <tr><th>S.No</th><th>Date</th><th>Warehouse</th><th>Category</th><th>Item</th><th>Vendor</th><th>Stock In Hand</th><th>Received</th><th>Closing</th>{isAdmin && <th>Action</th>}</tr>
                   </thead>
                   <tbody>
                     {filteredHistory.length===0 && <tr><td colSpan={9} style={{ textAlign:"center", padding:20, color:"#5a4a20" }}>No purchase history yet.</td></tr>}
-                    {filteredHistory.map((h,i) => (
-                      <tr key={h.id||i}>
-                        <td style={{ color:"#5a4a20" }}>{i+1}</td>
-                        <td style={{ color:"#d4b96a", whiteSpace:"nowrap" }}>{formatDate(h.date)}</td>
-                        <td><span className="wh-badge">{h.type==="transfer"?(h.from&&h.to?`${h.from}→${h.to}`:"Transfer"):(h.warehouse||"—")}</span></td>
-                        <td style={{ color:"#c9a84c" }}>{h.category||"Transfer"}</td>
-                        <td style={{ fontWeight:600, color:"#f5e6b0" }}>{h.item}</td>
-                        <td style={{ color:"#7a6a30" }}>{h.type==="transfer" ? "⇄ Transfer" : (h.vendor||"—")}</td>
-                        <td style={{ textAlign:"center" }}>{Math.round(((h.stockInHand??h.qty)||0)*100)/100}</td>
-                        <td style={{ color:"#4ade80", fontWeight:700, textAlign:"center" }}>{h.type==="transfer"?`⇄${h.qty}`:`+${Math.round((h.received||0)*100)/100}`}</td>
-                        <td style={{ color:"#f5d060", fontWeight:700, textAlign:"center" }}>{Math.round(((h.closing??h.qty)||0)*100)/100}</td>
-                      </tr>
-                    ))}
+                    {filteredHistory.map((h,i) => {
+                      const isBlankItem = h.type==="purchase" && (!h.item || !h.item.trim());
+                      return (
+                        <tr key={h.id||i} style={{ background: isBlankItem ? "#1a0a0a" : undefined }}>
+                          <td style={{ color:"#5a4a20" }}>{i+1}</td>
+                          <td style={{ color:"#d4b96a", whiteSpace:"nowrap" }}>{formatDate(h.date)}</td>
+                          <td><span className="wh-badge">{h.type==="transfer"?(h.from&&h.to?`${h.from}→${h.to}`:"Transfer"):(h.warehouse||"—")}</span></td>
+                          <td style={{ color:"#c9a84c" }}>{h.category||"Transfer"}</td>
+                          <td style={{ fontWeight:600, color: isBlankItem ? "#f87171" : "#f5e6b0" }}>{isBlankItem ? "⚠ BLANK — needs edit" : h.item}</td>
+                          <td style={{ color:"#7a6a30" }}>{h.type==="transfer" ? "⇄ Transfer" : (h.vendor||"—")}</td>
+                          <td style={{ textAlign:"center" }}>{Math.round(((h.stockInHand??h.qty)||0)*100)/100}</td>
+                          <td style={{ color:"#4ade80", fontWeight:700, textAlign:"center" }}>{h.type==="transfer"?`⇄${h.qty}`:`+${Math.round((h.received||0)*100)/100}`}</td>
+                          <td style={{ color:"#f5d060", fontWeight:700, textAlign:"center" }}>{Math.round(((h.closing??h.qty)||0)*100)/100}</td>
+                          {isAdmin && h.type==="purchase" && (
+                            <td>
+                              <button className="btn btn-outline" style={{ fontSize:10, padding:"3px 8px", whiteSpace:"nowrap" }}
+                                onClick={()=>{ setEditingHistory(h); setHistoryEditForm({ item:h.item||"", vendor:h.vendor||"", date:String(h.date).split("T")[0], received:String(h.received||"") }); }}
+                                disabled={saving}>✎ Edit</button>
+                            </td>
+                          )}
+                          {isAdmin && h.type!=="purchase" && <td></td>}
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
             </>
           )}
+
+      {/* EDIT PURCHASE HISTORY MODAL */}
+      {editingHistory && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:200, backdropFilter:"blur(4px)" }}>
+          <div className="card slide-in" onClick={e=>e.stopPropagation()} style={{ width:"100%", maxWidth:460, margin:16, padding:24, background:"#0a0800", border:"1px solid #c9a84c", maxHeight:"92vh", overflowY:"auto" }}>
+            <div style={{ fontWeight:700, fontSize:17, marginBottom:18, color:"#f5d060" }}>✎ Edit Purchase Record</div>
+            <div style={{ background:"#1a1200", border:"1px solid #facc1560", borderRadius:8, padding:"10px 14px", fontSize:11, color:"#facc15", marginBottom:16 }}>
+              Editing: <strong>{editingHistory.warehouse}</strong> · <strong>{editingHistory.category}</strong> · Stock In Hand: <strong>{Math.round(((editingHistory.stockInHand??editingHistory.qty)||0)*100)/100}</strong> · Closing: <strong>{Math.round(((editingHistory.closing??editingHistory.qty)||0)*100)/100}</strong>
+              <div style={{ marginTop:4, color:"#c9a84c", fontSize:10 }}>⚠ Stock In Hand and Closing values are not editable here — edit directly in Supabase if needed.</div>
+            </div>
+            <div style={{ display:"grid", gap:12 }}>
+              <div>
+                <label>Item Name *</label>
+                <input value={historyEditForm.item} onChange={e=>setHistoryEditForm(f=>({...f,item:e.target.value}))} placeholder="e.g. Blue Cherry" style={{ borderColor: !historyEditForm.item.trim() ? "#ef4444" : "#3a2e10" }} />
+                {!historyEditForm.item.trim() && <div style={{ fontSize:10, color:"#f87171", marginTop:2 }}>Item name is required</div>}
+              </div>
+              <div>
+                <label>Vendor</label>
+                <input value={historyEditForm.vendor} onChange={e=>setHistoryEditForm(f=>({...f,vendor:e.target.value}))} placeholder="e.g. CENTIFLORA" />
+              </div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+                <div>
+                  <label>Date Received</label>
+                  <input type="date" value={historyEditForm.date} onChange={e=>setHistoryEditForm(f=>({...f,date:e.target.value}))} />
+                </div>
+                <div>
+                  <label>Received Qty</label>
+                  <input type="number" min="0" step="0.01" value={historyEditForm.received} onChange={e=>setHistoryEditForm(f=>({...f,received:e.target.value}))} placeholder="0" />
+                </div>
+              </div>
+            </div>
+            <div style={{ display:"flex", gap:10, marginTop:18, justifyContent:"flex-end" }}>
+              <button className="btn btn-outline" onClick={()=>setEditingHistory(null)} disabled={saving}>Cancel</button>
+              <button className="btn btn-gold" onClick={saveHistoryEdit} disabled={saving || !historyEditForm.item.trim()}>{saving?"Saving...":"✓ Save Changes"}</button>
+            </div>
+          </div>
+        </div>
+      )}
 
           {/* TRANSFER */}
           {tab===TABS.TRANSFER && (
