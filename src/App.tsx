@@ -1560,28 +1560,78 @@ export default function App() {
   async function saveHistoryEdit() {
     if (!historyEditForm.item.trim()) { alert("⚠ Item name cannot be blank."); return; }
     if (!historyEditForm.received || Number(historyEditForm.received) <= 0) { alert("⚠ Received quantity must be greater than 0."); return; }
+
+    const oldReceived = Number(editingHistory.received || 0);
+    const newReceived = Number(historyEditForm.received);
+    const delta = newReceived - oldReceived; // e.g. 100-90 = +10
+    const oldItem = editingHistory.item || "";
+    const newItem = historyEditForm.item.trim();
+    const itemChanged = oldItem !== newItem;
+
+    // Warn if item name changed AND qty changed — stock adjustment may be wrong
+    if (itemChanged && delta !== 0) {
+      const ok = confirm(
+        `⚠ You changed both the item name and quantity.\n\n` +
+        `Old: "${oldItem}" × ${oldReceived}\n` +
+        `New: "${newItem}" × ${newReceived}\n\n` +
+        `The stock difference (${delta > 0 ? "+" : ""}${delta}) will be applied to "${newItem}".\n` +
+        `If this is correct, click OK. Otherwise click Cancel and edit separately.`
+      );
+      if (!ok) return;
+    }
+
     setSaving(true); setSyncStatus("saving");
     try {
+      // Step 1: Update the history record label
       const { error } = await supabase.from("stock_history").update({
-        item: historyEditForm.item.trim(),
+        item: newItem,
         vendor: historyEditForm.vendor.trim() || null,
         date: historyEditForm.date,
-        received: Number(historyEditForm.received),
+        received: newReceived,
+        closing: (editingHistory.stockInHand || 0) + newReceived,
       }).eq("id", editingHistory.id);
       if (error) throw error;
-      // Update local state
+
+      // Step 2: If received qty changed, adjust the actual stock
+      if (delta !== 0) {
+        // Find the category key from the category label
+        const catEntry = Object.entries(CATEGORIES).find(([,v]) => v.label === editingHistory.category);
+        const categoryKey = catEntry ? catEntry[0] : null;
+        if (categoryKey) {
+          const condition = editingHistory.condition || "new";
+          await adjustStockAtomic([{
+            warehouse: editingHistory.warehouse,
+            categoryKey,
+            productName: newItem,
+            delta, // positive = add more stock, negative = reduce
+            condition,
+          }]);
+          // Refresh stock from DB to get accurate values
+          await fetchData();
+        } else {
+          alert(`⚠ History label updated but could not find category "${editingHistory.category}" to adjust stock automatically. Please verify stock levels manually.`);
+        }
+      }
+
+      // Step 3: Update local history state
       setStockHistory(h => h.map(row => row.id === editingHistory.id ? {
         ...row,
-        item: historyEditForm.item.trim(),
+        item: newItem,
         vendor: historyEditForm.vendor.trim() || "",
         date: historyEditForm.date,
-        received: Number(historyEditForm.received),
+        received: newReceived,
+        closing: (editingHistory.stockInHand || 0) + newReceived,
       } : row));
+
       setSyncStatus("synced");
       setEditingHistory(null);
+
+      if (delta !== 0) {
+        alert(`✓ Done! Stock adjusted by ${delta > 0 ? "+" : ""}${delta}. New stock reflects the corrected purchase quantity.`);
+      }
     } catch(err) {
       setSyncStatus("error");
-      alert("⚠ Update Failed!\n\n" + (err?.message||""));
+      alert("⚠ Update Failed! Stock may be inconsistent — please refresh and verify.\n\n" + (err?.message||""));
     }
     setSaving(false);
   }
@@ -2112,8 +2162,18 @@ export default function App() {
           <div className="card slide-in" onClick={e=>e.stopPropagation()} style={{ width:"100%", maxWidth:460, margin:16, padding:24, background:"#0a0800", border:"1px solid #c9a84c", maxHeight:"92vh", overflowY:"auto" }}>
             <div style={{ fontWeight:700, fontSize:17, marginBottom:18, color:"#f5d060" }}>✎ Edit Purchase Record</div>
             <div style={{ background:"#1a1200", border:"1px solid #facc1560", borderRadius:8, padding:"10px 14px", fontSize:11, color:"#facc15", marginBottom:16 }}>
-              Editing: <strong>{editingHistory.warehouse}</strong> · <strong>{editingHistory.category}</strong> · Stock In Hand: <strong>{Math.round(((editingHistory.stockInHand??editingHistory.qty)||0)*100)/100}</strong> · Closing: <strong>{Math.round(((editingHistory.closing??editingHistory.qty)||0)*100)/100}</strong>
-              <div style={{ marginTop:4, color:"#c9a84c", fontSize:10 }}>⚠ Stock In Hand and Closing values are not editable here — edit directly in Supabase if needed.</div>
+              <div><strong>{editingHistory.warehouse}</strong> · <strong>{editingHistory.category}</strong></div>
+              <div style={{ marginTop:6, display:"flex", gap:16, flexWrap:"wrap" }}>
+                <span>Stock In Hand (before purchase): <strong>{Math.round(((editingHistory.stockInHand??0))*100)/100}</strong></span>
+                <span>Original received: <strong>{Math.round((editingHistory.received||0)*100)/100}</strong></span>
+              </div>
+              {Number(historyEditForm.received) !== Number(editingHistory.received||0) && (
+                <div style={{ marginTop:8, padding:"6px 10px", background:"#0a1a0a", border:"1px solid #4ade8040", borderRadius:6 }}>
+                  📦 Stock will be adjusted by <strong style={{ color: Number(historyEditForm.received)>Number(editingHistory.received||0) ? "#4ade80" : "#f87171" }}>
+                    {Number(historyEditForm.received)>Number(editingHistory.received||0)?"+":""}{Math.round((Number(historyEditForm.received)-Number(editingHistory.received||0))*100)/100}
+                  </strong> units when saved.
+                </div>
+              )}
             </div>
             <div style={{ display:"grid", gap:12 }}>
               <div>
