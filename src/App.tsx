@@ -2312,7 +2312,7 @@ export default function App() {
       {/* RETURN MODAL */}
       {showReturnForm && (
         <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:100, backdropFilter:"blur(4px)" }}>
-          <div className="card slide-in" onClick={e=>e.stopPropagation()} style={{ width:"100%", maxWidth:500, margin:16, padding:24, background:"#0a0800", border:"1px solid #c9a84c" }}>
+          <div className="card slide-in" onClick={e=>e.stopPropagation()} style={{ width:"100%", maxWidth:500, margin:16, padding:24, background:"#0a0800", border:"1px solid #c9a84c", maxHeight:"92vh", overflowY:"auto" }}>
             <div style={{ fontWeight:700, fontSize:17, marginBottom:18, color:"#f5d060" }}>♻️ Return Item to Stock</div>
             <div style={{ display:"grid", gap:12 }}>
               <div><label>Category</label>
@@ -2416,7 +2416,7 @@ export default function App() {
       {/* ADD PRODUCT MODAL */}
       {showAddProductForm && (
         <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:100, backdropFilter:"blur(4px)" }}>
-          <div className="card slide-in" onClick={e=>e.stopPropagation()} style={{ width:"100%", maxWidth:420, margin:16, padding:24, background:"#0a0800", border:"1px solid #c9a84c" }}>
+          <div className="card slide-in" onClick={e=>e.stopPropagation()} style={{ width:"100%", maxWidth:420, margin:16, padding:24, background:"#0a0800", border:"1px solid #c9a84c", maxHeight:"92vh", overflowY:"auto" }}>
             <div style={{ fontWeight:700, fontSize:17, marginBottom:18, color:"#f5d060" }}>📦 Add New Product</div>
             <div style={{ display:"grid", gap:12 }}>
               <div><label>Category</label><select value={newProductForm.categoryKey} onChange={e=>setNewProductForm(f=>({...f,categoryKey:e.target.value}))}>{Object.entries(CATEGORIES).map(([k,c])=><option key={k} value={k}>{c.icon} {c.label}</option>)}</select></div>
