@@ -164,9 +164,10 @@ function computeOpeningClosing({ stock, stockHistory, logs, categoryKey, categor
   });
 }
 
-function ReportTab({ logs, customers, stock, stockHistory, pureOilProducts }) {
+function ReportTab({ logs, customers, stock, stockHistory, pureOilProducts, isAdmin }) {
   const now = new Date();
   const [reportSubTab, setReportSubTab] = useState("stockreport");
+  const [dailyReportDate, setDailyReportDate] = useState(() => new Date().toISOString().split("T")[0]);
   const [reportMonth, setReportMonth] = useState(`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`);
   const [stockReportMonth, setStockReportMonth] = useState(`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`);
   const [stockReportWarehouse, setStockReportWarehouse] = useState("ALL");
@@ -274,7 +275,8 @@ function ReportTab({ logs, customers, stock, stockHistory, pureOilProducts }) {
           {key:"stockreport",label:"🧪 Pure Oil Opening/Closing"},
           {key:"customerusage",label:"👥 Customer Usage"},
           {key:"productconsumption",label:"🔋 Battery/Aerosol Consumption"},
-        ].map(t=>(
+          {key:"dailyreport",label:"📋 Daily Activity Report", adminOnly:true},
+        ].filter(t => !t.adminOnly || isAdmin).map(t=>(
           <div key={t.key} onClick={()=>setReportSubTab(t.key)} style={{ cursor:"pointer", padding:"10px 18px", fontSize:13, fontWeight:600, color:reportSubTab===t.key?"#f5d060":"#7a6a30", borderBottom:reportSubTab===t.key?"2px solid #f5d060":"2px solid transparent" }}>{t.label}</div>
         ))}
       </div>
@@ -407,7 +409,348 @@ function ReportTab({ logs, customers, stock, stockHistory, pureOilProducts }) {
       </>
       )}
 
-      {reportSubTab==="productconsumption" && (
+      {reportSubTab==="dailyreport" && (() => {
+        const W = "Al Quoz Warehouse";
+        const dayLogs = logs.filter(l => String(l.date).split("T")[0] === dailyReportDate && l.warehouse === W);
+        const dayPurchases = stockHistory.filter(h => h.type==="purchase" && String(h.date).split("T")[0] === dailyReportDate && h.warehouse === W);
+        const dayReturns = stockHistory.filter(h => h.type==="return" && String(h.date).split("T")[0] === dailyReportDate && h.warehouse === W);
+
+        // Build per-customer rows
+        const customerMap: Record<string, any> = {};
+        dayLogs.forEach(l => {
+          if (!customerMap[l.customer]) customerMap[l.customer] = {
+            technician: l.technician||"—",
+            pureOil:[], components:[], battery:[], diffuser:[], finishedOil:[], aerosol:[], urinals:[],
+          };
+          let prods: any[] = [];
+          try { prods = JSON.parse(l.products||"[]"); } catch {}
+          prods.forEach((p:any) => {
+            const name = p.productName || "?";
+            const qty = Number(p.qty)||0;
+            const unit = CATEGORIES[p.categoryKey]?.unit||"";
+            const entry = `${name} - ${qty} ${unit}`.trim();
+            if (p.categoryKey==="PURE_OIL") customerMap[l.customer].pureOil.push(entry);
+            else if (p.categoryKey==="OIL_COMPONENTS") customerMap[l.customer].components.push(entry);
+            else if (p.categoryKey==="BATTERY") customerMap[l.customer].battery.push(entry);
+            else if (p.categoryKey==="AROMA_DIFFUSER") customerMap[l.customer].diffuser.push(`${name} - ${qty}`);
+            else if (p.categoryKey==="FINISHED_AROMA_OIL") customerMap[l.customer].finishedOil.push(entry);
+            else if (p.categoryKey==="AEROSOL_DISPENSER") customerMap[l.customer].aerosol.push(`${name} - ${qty} Pcs`);
+            else if (p.categoryKey==="AEROSOL_REFILL") customerMap[l.customer].aerosol.push(`${name} - ${qty} Pcs (Refill)`);
+            else if (p.categoryKey==="URINAL") customerMap[l.customer].urinals.push(entry);
+          });
+        });
+        const customerRows = Object.entries(customerMap);
+
+        // Return rows
+        const returnRows: any[] = [];
+        dayReturns.forEach(h => {
+          const existing = returnRows.find(r => r.customer === (h.customer||"—"));
+          const entry = `${h.item||"?"} - ${h.received||0} ${h.unit||""}`;
+          if (!existing) {
+            returnRows.push({ customer: h.customer||"—", finishedOil:[], diffuser:[], aerosol:[] });
+          }
+          const row = returnRows.find(r => r.customer === (h.customer||"—"));
+          if (h.category==="Finished Aroma Oil") row.finishedOil.push(entry);
+          else if (h.category==="Aroma Diffuser") row.diffuser.push(entry);
+          else if (h.category==="Aerosol Dispenser"||h.category==="Aerosol Refill") row.aerosol.push(entry);
+        });
+
+        // Overall consumption — product-wise totals, only if qty > 0
+        const consumptionMap: Record<string, {cat:string, qty:number, unit:string}> = {};
+        dayLogs.forEach(l => {
+          let prods: any[] = [];
+          try { prods = JSON.parse(l.products||"[]"); } catch {}
+          prods.forEach((p:any) => {
+            const key = `${p.categoryKey}||${p.productName}`;
+            const qty = Number(p.qty)||0;
+            if (qty <= 0 || !p.productName) return;
+            if (!consumptionMap[key]) consumptionMap[key] = {
+              cat: CATEGORIES[p.categoryKey]?.label||p.categoryKey,
+              qty: 0,
+              unit: CATEGORIES[p.categoryKey]?.unit||"",
+            };
+            consumptionMap[key].qty += qty;
+          });
+        });
+        const consumptionRows = Object.entries(consumptionMap)
+          .map(([k,v]) => ({ product: k.split("||")[1], ...v }))
+          .sort((a,b) => a.cat.localeCompare(b.cat));
+
+        // PDF Generation using browser print
+        function generatePDF() {
+          const dateLabel = new Date(dailyReportDate+"T00:00:00").toLocaleDateString("en-GB",{day:"2-digit",month:"long",year:"numeric"});
+          const cell = (txt:string) => `<td style="border:1px solid #000;padding:5px 8px;font-size:12px;vertical-align:top;white-space:pre-wrap;">${txt||""}</td>`;
+          const th = (txt:string, w?:string) => `<th style="border:1px solid #000;padding:5px 8px;font-size:12px;background:#f0f0f0;font-weight:bold;${w?`width:${w};`:"}"}">${txt}</th>`;
+
+          let html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
+          <title>Al Quoz Daily Report - ${dateLabel}</title>
+          <style>
+            body { font-family: Arial, sans-serif; margin: 20px; color: #000; }
+            h2 { font-size:14px; font-weight:bold; margin:24px 0 8px 0; }
+            table { border-collapse:collapse; width:100%; margin-bottom:16px; }
+            th,td { border:1px solid #000; padding:5px 8px; font-size:12px; vertical-align:top; }
+            th { background:#f0f0f0; font-weight:bold; }
+            .title { font-size:16px; font-weight:bold; text-align:center; margin-bottom:4px; }
+            .subtitle { font-size:13px; text-align:center; margin-bottom:20px; color:#333; }
+            @media print { body { margin:10mm; } }
+          </style></head><body>
+          <div class="title">AL QUOZ WAREHOUSE — DAILY REPORT</div>
+          <div class="subtitle">${dateLabel}</div>
+
+          <h2>1. CUSTOMER CONSUMPTION</h2>
+          <table>
+            <thead><tr>
+              <th style="width:15%">Customer</th>
+              <th style="width:12%">Pure Oil</th>
+              <th style="width:12%">Components</th>
+              <th style="width:10%">Battery</th>
+              <th style="width:12%">Diffuser</th>
+              <th style="width:13%">Finished Oil</th>
+              <th style="width:13%">Aerosol</th>
+              <th style="width:8%">Urinals</th>
+              <th style="width:5%">Technician</th>
+            </tr></thead>
+            <tbody>`;
+
+          if (customerRows.length === 0) {
+            html += `<tr><td colspan="9" style="text-align:center;color:#666;">No service logs for this date.</td></tr>`;
+          } else {
+            customerRows.forEach(([cust, d]:any) => {
+              html += `<tr>
+                ${cell(cust)}
+                ${cell(d.pureOil.join("\n"))}
+                ${cell(d.components.join("\n"))}
+                ${cell(d.battery.join("\n"))}
+                ${cell(d.diffuser.join("\n"))}
+                ${cell(d.finishedOil.join("\n"))}
+                ${cell(d.aerosol.join("\n"))}
+                ${cell(d.urinals.join("\n"))}
+                ${cell(d.technician)}
+              </tr>`;
+            });
+          }
+
+          html += `</tbody></table>
+
+          <h2>2. RETURN ENTRY</h2>
+          <table>
+            <thead><tr>
+              <th style="width:25%">Customer</th>
+              <th style="width:25%">Finished Oil</th>
+              <th style="width:25%">Diffuser</th>
+              <th style="width:25%">Aerosol</th>
+            </tr></thead>
+            <tbody>`;
+
+          if (returnRows.length === 0) {
+            html += `<tr>${cell("")}${cell("")}${cell("")}${cell("")}</tr>`;
+          } else {
+            returnRows.forEach(r => {
+              html += `<tr>${cell(r.customer)}${cell(r.finishedOil.join("\n"))}${cell(r.diffuser.join("\n"))}${cell(r.aerosol.join("\n"))}</tr>`;
+            });
+          }
+
+          html += `</tbody></table>
+
+          <h2>3. PURCHASE</h2>
+          <table>
+            <thead><tr>
+              <th style="width:33%">Vendor</th>
+              <th style="width:34%">Item Name</th>
+              <th style="width:33%">Quantity</th>
+            </tr></thead>
+            <tbody>`;
+
+          if (dayPurchases.length === 0) {
+            html += `<tr>${cell("")}${cell("")}${cell("")}</tr>`;
+          } else {
+            dayPurchases.forEach((h:any) => {
+              html += `<tr>${cell(h.vendor||"—")}${cell(h.item||"?")}${cell(`${h.received||0} ${h.unit||""}`)}</tr>`;
+            });
+          }
+
+          html += `</tbody></table>
+
+          <h2>4. OVERALL CONSUMPTION</h2>
+          <table>
+            <thead><tr>
+              <th style="width:40%">Category</th>
+              <th style="width:40%">Product</th>
+              <th style="width:20%">Total Qty</th>
+            </tr></thead>
+            <tbody>`;
+
+          if (consumptionRows.length === 0) {
+            html += `<tr><td colspan="3" style="text-align:center;color:#666;">No consumption recorded for this date.</td></tr>`;
+          } else {
+            consumptionRows.forEach(r => {
+              html += `<tr>${cell(r.cat)}${cell(r.product)}${cell(`${Math.round(r.qty*100)/100} ${r.unit}`)}</tr>`;
+            });
+          }
+
+          html += `</tbody></table>
+          </body></html>`;
+
+          const win = window.open("","_blank","width=900,height=700");
+          if (win) {
+            win.document.write(html);
+            win.document.close();
+            setTimeout(()=>{ win.focus(); win.print(); }, 500);
+          }
+        }
+
+        const dateLabel = new Date(dailyReportDate+"T00:00:00").toLocaleDateString("en-GB",{day:"2-digit",month:"long",year:"numeric"});
+
+        return (
+          <>
+          {/* Header */}
+          <div style={{ display:"flex", alignItems:"flex-end", gap:14, marginBottom:20, flexWrap:"wrap" }}>
+            <div>
+              <label>Select Date</label>
+              <input type="date" value={dailyReportDate} onChange={e=>setDailyReportDate(e.target.value)} style={{ width:200 }} />
+            </div>
+            <div style={{ flex:1 }}>
+              <div style={{ fontSize:14, fontWeight:700, color:"#f5d060", textTransform:"uppercase", letterSpacing:1 }}>
+                📋 Al Quoz Warehouse — {dateLabel}
+              </div>
+              <div style={{ fontSize:11, color:"#7a6a30", marginTop:2 }}>
+                {dayLogs.length} service log{dayLogs.length!==1?"s":""} · {customerRows.length} customer{customerRows.length!==1?"s":""} · {dayPurchases.length} purchase{dayPurchases.length!==1?"s":""} · {dayReturns.length} return{dayReturns.length!==1?"s":""}
+              </div>
+            </div>
+            <button className="btn btn-gold" onClick={generatePDF} style={{ display:"flex", alignItems:"center", gap:6 }}>
+              🖨 Download PDF
+            </button>
+          </div>
+
+          {/* SECTION 1: Customer Consumption */}
+          <div style={{ marginBottom:24 }}>
+            <div style={{ fontSize:13, fontWeight:700, color:"#f5d060", marginBottom:10, letterSpacing:0.5 }}>1. CUSTOMER CONSUMPTION</div>
+            <div style={{ background:"#0f0e00", border:"1px solid #3a2e10", borderRadius:12, overflow:"auto" }}>
+              <table style={{ width:"100%", borderCollapse:"collapse", minWidth:900 }}>
+                <thead style={{ background:"#0a0800" }}>
+                  <tr>
+                    {["Customer","Pure Oil","Components","Battery","Diffuser","Finished Oil","Aerosol","Urinals","Technician"].map(h=>(
+                      <th key={h} style={{ padding:"8px 10px", fontSize:11, color:"#c9a84c", fontWeight:700, borderBottom:"1px solid #3a2e10", borderRight:"1px solid #2a2000", textAlign:"left", whiteSpace:"nowrap" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {customerRows.length===0 && (
+                    <tr><td colSpan={9} style={{ textAlign:"center", padding:30, color:"#5a4a20", fontSize:13 }}>No service logs for this date.</td></tr>
+                  )}
+                  {customerRows.map(([cust, d]:any, i:number) => (
+                    <tr key={cust} style={{ borderBottom:"1px solid #2a2000", background:i%2===0?"#0a0800":"#0f0e00" }}>
+                      <td style={{ padding:"8px 10px", fontSize:11, fontWeight:600, color:"#f5e6b0", borderRight:"1px solid #2a2000", whiteSpace:"nowrap" }}>{cust}</td>
+                      {[d.pureOil,d.components,d.battery,d.diffuser,d.finishedOil,d.aerosol,d.urinals].map((arr:string[],ci:number)=>(
+                        <td key={ci} style={{ padding:"8px 10px", fontSize:11, color:"#f0e6c0", borderRight:"1px solid #2a2000", verticalAlign:"top" }}>
+                          {arr.length===0 ? <span style={{ color:"#3a2e10" }}>—</span> : arr.map((e:string,ei:number)=>(
+                            <div key={ei}>{e}</div>
+                          ))}
+                        </td>
+                      ))}
+                      <td style={{ padding:"8px 10px", fontSize:11, color:"#a78bfa", whiteSpace:"nowrap" }}>{d.technician}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* SECTION 2: Return Entry */}
+          <div style={{ marginBottom:24 }}>
+            <div style={{ fontSize:13, fontWeight:700, color:"#f5d060", marginBottom:10, letterSpacing:0.5 }}>2. RETURN ENTRY</div>
+            <div style={{ background:"#0f0e00", border:"1px solid #3a2e10", borderRadius:12, overflow:"auto" }}>
+              <table style={{ width:"100%", borderCollapse:"collapse" }}>
+                <thead style={{ background:"#0a0800" }}>
+                  <tr>
+                    {["Customer","Finished Oil","Diffuser","Aerosol"].map(h=>(
+                      <th key={h} style={{ padding:"8px 10px", fontSize:11, color:"#c9a84c", fontWeight:700, borderBottom:"1px solid #3a2e10", borderRight:"1px solid #2a2000", textAlign:"left" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {returnRows.length===0 ? (
+                    <tr>
+                      {["","","",""].map((_, i)=>(
+                        <td key={i} style={{ padding:"24px 10px", borderRight:"1px solid #2a2000", color:"#3a2e10", textAlign:"center", fontSize:11 }}>{i===0?"No returns":""}</td>
+                      ))}
+                    </tr>
+                  ) : returnRows.map((r,i)=>(
+                    <tr key={i} style={{ borderBottom:"1px solid #2a2000" }}>
+                      <td style={{ padding:"8px 10px", fontSize:11, fontWeight:600, color:"#f5e6b0", borderRight:"1px solid #2a2000" }}>{r.customer}</td>
+                      <td style={{ padding:"8px 10px", fontSize:11, color:"#f0e6c0", borderRight:"1px solid #2a2000", verticalAlign:"top" }}>{r.finishedOil.join("\n")||"—"}</td>
+                      <td style={{ padding:"8px 10px", fontSize:11, color:"#f0e6c0", borderRight:"1px solid #2a2000", verticalAlign:"top" }}>{r.diffuser.join("\n")||"—"}</td>
+                      <td style={{ padding:"8px 10px", fontSize:11, color:"#f0e6c0", verticalAlign:"top" }}>{r.aerosol.join("\n")||"—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* SECTION 3: Purchase */}
+          <div style={{ marginBottom:24 }}>
+            <div style={{ fontSize:13, fontWeight:700, color:"#f5d060", marginBottom:10, letterSpacing:0.5 }}>3. PURCHASE</div>
+            <div style={{ background:"#0f0e00", border:"1px solid #3a2e10", borderRadius:12, overflow:"auto" }}>
+              <table style={{ width:"100%", borderCollapse:"collapse" }}>
+                <thead style={{ background:"#0a0800" }}>
+                  <tr>
+                    {["Vendor","Item Name","Quantity"].map(h=>(
+                      <th key={h} style={{ padding:"8px 10px", fontSize:11, color:"#c9a84c", fontWeight:700, borderBottom:"1px solid #3a2e10", borderRight:"1px solid #2a2000", textAlign:"left" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {dayPurchases.length===0 ? (
+                    <tr>
+                      {["","",""].map((_,i)=>(
+                        <td key={i} style={{ padding:"24px 10px", borderRight:"1px solid #2a2000", color:"#3a2e10", textAlign:"center", fontSize:11 }}>{i===0?"No purchases":""}</td>
+                      ))}
+                    </tr>
+                  ) : dayPurchases.map((h:any,i:number)=>(
+                    <tr key={i} style={{ borderBottom:"1px solid #2a2000", background:i%2===0?"#0a0800":"#0f0e00" }}>
+                      <td style={{ padding:"8px 10px", fontSize:11, color:"#f0e6c0", borderRight:"1px solid #2a2000" }}>{h.vendor||"—"}</td>
+                      <td style={{ padding:"8px 10px", fontSize:11, fontWeight:600, color:"#f5e6b0", borderRight:"1px solid #2a2000" }}>{h.item||<span style={{ color:"#f87171" }}>⚠ BLANK</span>}</td>
+                      <td style={{ padding:"8px 10px", fontSize:11, color:"#4ade80", fontWeight:700 }}>+{Math.round((h.received||0)*100)/100} {h.unit||""}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* SECTION 4: Overall Consumption */}
+          <div style={{ marginBottom:24 }}>
+            <div style={{ fontSize:13, fontWeight:700, color:"#f5d060", marginBottom:6, letterSpacing:0.5 }}>4. OVERALL CONSUMPTION</div>
+            <div style={{ fontSize:11, color:"#7a6a30", marginBottom:10 }}>Only products consumed today are shown. Products with 0 usage are excluded.</div>
+            <div style={{ background:"#0f0e00", border:"1px solid #3a2e10", borderRadius:12, overflow:"auto" }}>
+              <table style={{ width:"100%", borderCollapse:"collapse" }}>
+                <thead style={{ background:"#0a0800" }}>
+                  <tr>
+                    {["Category","Product","Total Qty"].map(h=>(
+                      <th key={h} style={{ padding:"8px 10px", fontSize:11, color:"#c9a84c", fontWeight:700, borderBottom:"1px solid #3a2e10", borderRight:"1px solid #2a2000", textAlign:"left" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {consumptionRows.length===0 ? (
+                    <tr><td colSpan={3} style={{ textAlign:"center", padding:30, color:"#5a4a20", fontSize:13 }}>No consumption recorded for this date.</td></tr>
+                  ) : consumptionRows.map((r,i)=>(
+                    <tr key={i} style={{ borderBottom:"1px solid #2a2000", background:i%2===0?"#0a0800":"#0f0e00" }}>
+                      <td style={{ padding:"8px 10px", fontSize:11, color:"#c9a84c", borderRight:"1px solid #2a2000" }}>{r.cat}</td>
+                      <td style={{ padding:"8px 10px", fontSize:11, fontWeight:600, color:"#f5e6b0", borderRight:"1px solid #2a2000" }}>{r.product}</td>
+                      <td style={{ padding:"8px 10px", fontSize:11, color:"#f5d060", fontWeight:700 }}>{Math.round(r.qty*100)/100} {r.unit}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          </>
+        );
+      })()}
+
+            {reportSubTab==="productconsumption" && (
       <>
       <div style={{ display:"flex", gap:14, marginBottom:20, alignItems:"flex-end", flexWrap:"wrap" }}>
         <div style={{ flex:"1 1 260px", maxWidth:340 }}>
@@ -2262,7 +2605,7 @@ export default function App() {
             </>
           )}
 
-          {tab===TABS.REPORT && <ReportTab logs={logs} customers={customers} stock={stock} stockHistory={stockHistory} pureOilProducts={pureOilProducts} />}
+          {tab===TABS.REPORT && <ReportTab logs={logs} customers={customers} stock={stock} stockHistory={stockHistory} pureOilProducts={pureOilProducts} isAdmin={isAdmin} />}
         </>}
       </div>
 
