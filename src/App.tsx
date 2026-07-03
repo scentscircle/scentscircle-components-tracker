@@ -1984,6 +1984,113 @@ export default function App() {
     setSaving(false);
   }
 
+  async function downloadFullBackup() {
+    setSyncStatus("saving"); setSaving(true);
+    try {
+      const tableNames = ["logs","stock","stock_history","customers","pure_oils","technicians","app_roles","contracts","product_catalog","product_thresholds"];
+      const results = await Promise.all([
+        supabase.from("logs").select("*").order("created_at",{ascending:false}),
+        supabase.from("stock").select("*"),
+        supabase.from("stock_history").select("*").order("created_at",{ascending:false}),
+        supabase.from("customers").select("*"),
+        supabase.from("pure_oils").select("*"),
+        supabase.from("technicians").select("*"),
+        supabase.from("app_roles").select("*"),
+        supabase.from("contracts").select("*"),
+        supabase.from("product_catalog").select("*"),
+        supabase.from("product_thresholds").select("*"),
+      ]);
+
+      function toCSV(rows: any[]) {
+        if (!rows || rows.length === 0) return "No data";
+        const headers = Object.keys(rows[0]);
+        const esc = (v: any) => {
+          const s = v === null || v === undefined ? "" : String(v);
+          return s.includes(",") || s.includes('"') || s.includes("\n") ? `"${s.replace(/"/g,'""')}"`  : s;
+        };
+        return [headers.join(","), ...rows.map(r => headers.map(h => esc(r[h])).join(","))].join("\n");
+      }
+
+      const dateISO = new Date().toISOString().split("T")[0];
+      const dateStr = new Date().toLocaleDateString("en-GB",{day:"2-digit",month:"long",year:"numeric"});
+
+      // Build one combined summary file
+      let combined = `SCENTSCIRCLE WAREHOUSE — FULL DATABASE BACKUP\nDate: ${dateStr}  Time: ${new Date().toLocaleTimeString()}\n`;
+      combined += "=".repeat(60) + "\n\n";
+      combined += "TABLE SUMMARY:\n";
+      tableNames.forEach((n,i) => { combined += `  ${n}: ${(results[i].data||[]).length} records\n`; });
+      combined += "\n" + "=".repeat(60) + "\n\n";
+      tableNames.forEach((name, i) => {
+        const data = results[i].data || [];
+        combined += `### ${name.toUpperCase()} (${data.length} records) ###\n${toCSV(data)}\n\n${"=".repeat(60)}\n\n`;
+      });
+
+      // Download combined file
+      const blob = new Blob([combined], { type:"text/plain;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `ScentCircle_FullBackup_${dateISO}.txt`;
+      document.body.appendChild(a); a.click();
+      document.body.removeChild(a); URL.revokeObjectURL(url);
+
+      // Download each table as individual CSV
+      for (let i = 0; i < tableNames.length; i++) {
+        await new Promise(r => setTimeout(r, 400));
+        const csv = toCSV(results[i].data || []);
+        const b = new Blob([csv], { type:"text/csv;charset=utf-8;" });
+        const u = URL.createObjectURL(b);
+        const link = document.createElement("a");
+        link.href = u; link.download = `${tableNames[i]}_${dateISO}.csv`;
+        document.body.appendChild(link); link.click();
+        document.body.removeChild(link); URL.revokeObjectURL(u);
+      }
+
+      setSyncStatus("synced");
+      const total = results.reduce((s,r) => s+(r.data?.length||0),0);
+      alert(`✓ Backup complete!\n\n${tableNames.length} tables · ${total} total records\n\nFiles saved to your Downloads folder.\nPlease move them to Google Drive for safekeeping.`);
+    } catch(err) {
+      setSyncStatus("error");
+      alert("⚠ Backup failed: " + (err as any)?.message||"Unknown error");
+    }
+    setSaving(false);
+  }
+
+  async function deleteReturn(h) {
+    const confirmed = confirm(
+      `⚠ Delete this return entry?\n\nItem: ${h.item}\nCustomer: ${h.vendor||"—"}\nQty: ${h.received} ${h.unit}\n\nThis will DEDUCT ${h.received} ${h.unit} from ${h.warehouse} stock (reversing the return).\n\nThis cannot be undone.`
+    );
+    if (!confirmed) return;
+    setSaving(true); setSyncStatus("saving");
+    try {
+      // Delete from DB
+      const { error } = await supabase.from("stock_history").delete().eq("id", h.id);
+      if (error) throw error;
+
+      // Reverse the stock addition (deduct what was added)
+      const catEntry = Object.entries(CATEGORIES).find(([,v]) => v.label === h.category);
+      const categoryKey = catEntry ? catEntry[0] : null;
+      if (categoryKey) {
+        await adjustStockAtomic([{
+          warehouse: h.warehouse,
+          categoryKey,
+          productName: h.item,
+          delta: -(Number(h.received)||0), // negative = deduct
+          condition: h.condition || "new",
+        }]);
+        await fetchData();
+      }
+
+      // Remove from local state
+      setStockHistory(prev => prev.filter(r => r.id !== h.id));
+      setSyncStatus("synced");
+      alert(`✓ Return entry deleted. Stock reduced by ${h.received} ${h.unit}.`);
+    } catch(err) {
+      setSyncStatus("error");
+      alert("⚠ Delete failed: " + (err as any)?.message||"Unknown error");
+    }
+    setSaving(false);
+  }
+
   const syncColor = syncStatus==="synced"?"#c9a84c":syncStatus==="saving"?"#facc15":"#ef4444";
   const syncLabel = syncStatus==="synced"?"✓ Synced":syncStatus==="saving"?"⟳ Saving...":"✕ Sync Error";
   const lastRefreshStr = lastRefresh ? lastRefresh.toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit",second:"2-digit"}) : "";
@@ -2074,6 +2181,12 @@ export default function App() {
           <button onClick={handleLogout} style={{ cursor:"pointer", background:"transparent", border:"1px solid #c9a84c40", borderRadius:6, color:"#c9a84c", padding:"4px 10px", fontSize:10, fontFamily:"Poppins,sans-serif", fontWeight:600, whiteSpace:"nowrap" }}>Logout</button>
 
           <div className="divider" />
+
+          {isAdmin && (
+            <button onClick={downloadFullBackup} disabled={saving} style={{ cursor:"pointer", background:"linear-gradient(135deg,#1a3a1a,#0a2a0a)", border:"1px solid #4ade8060", borderRadius:6, color:"#4ade80", padding:"4px 10px", fontSize:10, fontFamily:"Poppins,sans-serif", fontWeight:700, whiteSpace:"nowrap" }}>
+              📦 Backup
+            </button>
+          )}
 
           <button className="btn btn-outline" onClick={fetchData} style={{ fontSize:11, padding:"6px 12px" }}>↻ Refresh</button>
 
@@ -2589,7 +2702,7 @@ export default function App() {
               <div className="card" style={{ overflow:"auto" }}>
                 <table style={{ width:"100%", borderCollapse:"collapse" }}>
                   <thead style={{ background:"#0a0800", borderBottom:"1px solid #3a2e10" }}>
-                    <tr><th>S.No</th><th>Date</th><th>Warehouse</th><th>Item</th><th>Customer</th><th>Technician</th><th>Qty Returned</th><th>Closing Stock</th></tr>
+                    <tr><th>S.No</th><th>Date</th><th>Warehouse</th><th>Item</th><th>Customer</th><th>Technician</th><th>Qty Returned</th><th>Closing Stock</th>{isAdmin && <th>Action</th>}</tr>
                   </thead>
                   <tbody>
                     {stockHistory.filter(h=>h.type==="return" && (!roleWarehouse || h.warehouse===roleWarehouse)).length===0 && <tr><td colSpan={7} style={{ textAlign:"center", padding:20, color:"#5a4a20" }}>No returns logged yet.</td></tr>}
@@ -2603,6 +2716,7 @@ export default function App() {
                         <td style={{ color:"#a78bfa" }}>{h.technician||"—"}</td>
                         <td style={{ color:"#4ade80", fontWeight:700 }}>+{h.received} {h.unit}</td>
                         <td style={{ fontWeight:700 }}>{h.closing} {h.unit}</td>
+                        {isAdmin && <td><button className="btn btn-danger" style={{ fontSize:10, padding:"3px 8px", whiteSpace:"nowrap" }} onClick={()=>deleteReturn(h)} disabled={saving}>🗑 Delete</button></td>}
                       </tr>
                     ))}
                   </tbody>
