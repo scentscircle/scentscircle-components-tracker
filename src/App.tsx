@@ -441,15 +441,16 @@ function ReportTab({ logs, customers, stock, stockHistory, pureOilProducts, isAd
         });
         const customerRows = Object.entries(customerMap);
 
-        // Return rows
+        // Return rows — customer in h.vendor, technician in h.technician
         const returnRows: any[] = [];
         dayReturns.forEach(h => {
-          const existing = returnRows.find(r => r.customer === (h.customer||"—"));
+          const custName = (h.vendor && h.vendor.trim()) ? h.vendor : "—";
+          const techName = h.technician || "—";
           const entry = `${h.item||"?"} - ${h.received||0} ${h.unit||""}`;
-          if (!existing) {
-            returnRows.push({ customer: h.customer||"—", finishedOil:[], diffuser:[], aerosol:[] });
+          if (!returnRows.find(r => r.customer === custName)) {
+            returnRows.push({ customer: custName, technician: techName, finishedOil:[], diffuser:[], aerosol:[] });
           }
-          const row = returnRows.find(r => r.customer === (h.customer||"—"));
+          const row = returnRows.find(r => r.customer === custName);
           if (h.category==="Finished Aroma Oil") row.finishedOil.push(entry);
           else if (h.category==="Aroma Diffuser") row.diffuser.push(entry);
           else if (h.category==="Aerosol Dispenser"||h.category==="Aerosol Refill") row.aerosol.push(entry);
@@ -535,18 +536,19 @@ function ReportTab({ logs, customers, stock, stockHistory, pureOilProducts, isAd
           <h2>2. RETURN ENTRY</h2>
           <table>
             <thead><tr>
-              <th style="width:25%">Customer</th>
-              <th style="width:25%">Finished Oil</th>
-              <th style="width:25%">Diffuser</th>
-              <th style="width:25%">Aerosol</th>
+              <th style="width:20%">Customer</th>
+              <th style="width:15%">Technician</th>
+              <th style="width:22%">Finished Oil</th>
+              <th style="width:22%">Diffuser</th>
+              <th style="width:21%">Aerosol</th>
             </tr></thead>
             <tbody>`;
 
           if (returnRows.length === 0) {
-            html += `<tr>${cell("")}${cell("")}${cell("")}${cell("")}</tr>`;
+            html += `<tr>${cell("No returns")}${cell("")}${cell("")}${cell("")}</tr>`;
           } else {
             returnRows.forEach(r => {
-              html += `<tr>${cell(r.customer)}${cell(r.finishedOil.join("\n"))}${cell(r.diffuser.join("\n"))}${cell(r.aerosol.join("\n"))}</tr>`;
+              html += `<tr>${cell(r.customer)}${cell(r.technician||"—")}${cell(r.finishedOil.join("\n") || "—")}${cell(r.diffuser.join("\n") || "—")}${cell(r.aerosol.join("\n") || "—")}</tr>`;
             });
           }
 
@@ -663,7 +665,7 @@ function ReportTab({ logs, customers, stock, stockHistory, pureOilProducts, isAd
               <table style={{ width:"100%", borderCollapse:"collapse" }}>
                 <thead style={{ background:"#0a0800" }}>
                   <tr>
-                    {["Customer","Finished Oil","Diffuser","Aerosol"].map(h=>(
+                    {["Customer","Technician","Finished Oil","Diffuser","Aerosol"].map(h=>(
                       <th key={h} style={{ padding:"8px 10px", fontSize:11, color:"#c9a84c", fontWeight:700, borderBottom:"1px solid #3a2e10", borderRight:"1px solid #2a2000", textAlign:"left" }}>{h}</th>
                     ))}
                   </tr>
@@ -678,6 +680,7 @@ function ReportTab({ logs, customers, stock, stockHistory, pureOilProducts, isAd
                   ) : returnRows.map((r,i)=>(
                     <tr key={i} style={{ borderBottom:"1px solid #2a2000" }}>
                       <td style={{ padding:"8px 10px", fontSize:11, fontWeight:600, color:"#f5e6b0", borderRight:"1px solid #2a2000" }}>{r.customer}</td>
+                      <td style={{ padding:"8px 10px", fontSize:11, color:"#a78bfa", borderRight:"1px solid #2a2000" }}>{r.technician||"—"}</td>
                       <td style={{ padding:"8px 10px", fontSize:11, color:"#f0e6c0", borderRight:"1px solid #2a2000", verticalAlign:"top" }}>{r.finishedOil.join("\n")||"—"}</td>
                       <td style={{ padding:"8px 10px", fontSize:11, color:"#f0e6c0", borderRight:"1px solid #2a2000", verticalAlign:"top" }}>{r.diffuser.join("\n")||"—"}</td>
                       <td style={{ padding:"8px 10px", fontSize:11, color:"#f0e6c0", verticalAlign:"top" }}>{r.aerosol.join("\n")||"—"}</td>
@@ -904,7 +907,7 @@ export default function App() {
   const [transferForm, setTransferForm] = useState({ fromWarehouse:"Al Quoz Warehouse", toWarehouse:"Ajman Warehouse", categoryKey:"BATTERY", productName:"AA", qty:"", date:today(), condition:"new" });
 
   const [showReturnForm, setShowReturnForm] = useState(false);
-  const [returnForm, setReturnForm] = useState({ categoryKey:"FINISHED_AROMA_OIL", warehouse:roleWarehouse||"Al Quoz Warehouse", productName:"", qty:"", date:today(), customer:"", notes:"", machineCodes:[] });
+  const [returnForm, setReturnForm] = useState({ categoryKey:"FINISHED_AROMA_OIL", warehouse:roleWarehouse||"Al Quoz Warehouse", productName:"", qty:"", date:today(), customer:"", technician:"", notes:"", machineCodes:[] });
   const [returnProductSearch, setReturnProductSearch] = useState("");
   const [stockProductSearch, setStockProductSearch] = useState("");
 
@@ -1701,8 +1704,10 @@ export default function App() {
   }
 
   function submitReturn() {
-    if (!returnForm.productName) { alert("Please select or add a product first."); return; }
-    if (!returnForm.qty || Number(returnForm.qty)<=0) return;
+    if (!returnForm.customer) { alert("⚠ Please select a Customer before saving."); return; }
+    if (!returnForm.technician) { alert("⚠ Please select a Technician before saving."); return; }
+    if (!returnForm.productName) { alert("⚠ Please select or add a product first."); return; }
+    if (!returnForm.qty || Number(returnForm.qty)<=0) { alert("⚠ Please enter a valid quantity."); return; }
     const wh = returnForm.warehouse;
     const catKey = returnForm.categoryKey;
     const prod = returnForm.productName;
@@ -1729,7 +1734,7 @@ export default function App() {
     (async () => {
       try {
         const [result] = await adjustStockAtomic([{ warehouse:wh, categoryKey:catKey, productName:prod, delta:qty, condition }]);
-        const returnEntry = { id:Date.now(), date:returnForm.date, warehouse:wh, category:CATEGORIES[catKey]?.label||catKey, item:prod, vendor:returnForm.customer||"", stockInHand:result.newQty-qty, received:qty, closing:result.newQty, unit:CATEGORIES[catKey]?.unit||"Ltrs", type:"return", condition, machineCodes:isNewUsed?returnForm.machineCodes:undefined };
+        const returnEntry = { id:Date.now(), date:returnForm.date, warehouse:wh, category:CATEGORIES[catKey]?.label||catKey, item:prod, vendor:returnForm.customer||"", customer:returnForm.customer||"", technician:returnForm.technician||"", stockInHand:result.newQty-qty, received:qty, closing:result.newQty, unit:CATEGORIES[catKey]?.unit||"Ltrs", type:"return", condition, machineCodes:isNewUsed?returnForm.machineCodes:undefined };
         const { error } = await supabase.from("stock_history").insert({
           id: returnEntry.id, date: returnEntry.date, warehouse: returnEntry.warehouse,
           category: returnEntry.category, item: returnEntry.item, vendor: returnEntry.vendor || null,
@@ -1767,7 +1772,7 @@ export default function App() {
         setStockHistory(h => [returnEntry, ...h]);
         setSyncStatus("synced");
         setShowReturnForm(false);
-        setReturnForm({ categoryKey:"FINISHED_AROMA_OIL", warehouse:roleWarehouse||"Al Quoz Warehouse", productName:"", qty:"", date:today(), customer:"", notes:"", machineCodes:[] });
+        setReturnForm({ categoryKey:"FINISHED_AROMA_OIL", warehouse:roleWarehouse||"Al Quoz Warehouse", productName:"", qty:"", date:today(), customer:"", technician:"", notes:"", machineCodes:[] });
         setReturnProductSearch("");
       } catch (err) {
         setSyncStatus("error");
@@ -2584,7 +2589,7 @@ export default function App() {
               <div className="card" style={{ overflow:"auto" }}>
                 <table style={{ width:"100%", borderCollapse:"collapse" }}>
                   <thead style={{ background:"#0a0800", borderBottom:"1px solid #3a2e10" }}>
-                    <tr><th>S.No</th><th>Date</th><th>Warehouse</th><th>Item</th><th>Returned By/Ref</th><th>Qty Returned</th><th>Closing Stock</th></tr>
+                    <tr><th>S.No</th><th>Date</th><th>Warehouse</th><th>Item</th><th>Customer</th><th>Technician</th><th>Qty Returned</th><th>Closing Stock</th></tr>
                   </thead>
                   <tbody>
                     {stockHistory.filter(h=>h.type==="return" && (!roleWarehouse || h.warehouse===roleWarehouse)).length===0 && <tr><td colSpan={7} style={{ textAlign:"center", padding:20, color:"#5a4a20" }}>No returns logged yet.</td></tr>}
@@ -2594,7 +2599,8 @@ export default function App() {
                         <td style={{ color:"#d4b96a", whiteSpace:"nowrap" }}>{formatDate(h.date)}</td>
                         <td><span className="wh-badge">{h.warehouse}</span></td>
                         <td style={{ fontWeight:600, color:"#f5e6b0" }}>{h.item}</td>
-                        <td style={{ color:"#7a6a30" }}>{h.vendor||"—"}</td>
+                        <td style={{ fontWeight:600, color:"#f5e6b0" }}>{h.vendor||"—"}</td>
+                        <td style={{ color:"#a78bfa" }}>{h.technician||"—"}</td>
                         <td style={{ color:"#4ade80", fontWeight:700 }}>+{h.received} {h.unit}</td>
                         <td style={{ fontWeight:700 }}>{h.closing} {h.unit}</td>
                       </tr>
@@ -2837,11 +2843,23 @@ export default function App() {
                 <div><label>Quantity Returned</label><input type="number" min="0" step="0.01" value={returnForm.qty} onChange={e=>{ const val=e.target.value; setReturnForm(f=>{ const num=parseInt(val)||0; const isNewUsed=NEW_USED_CATEGORIES.includes(f.categoryKey); const codes = isNewUsed ? Array.from({length:num},(_,i)=>f.machineCodes?.[i]||"") : f.machineCodes; return {...f,qty:val,machineCodes:codes}; }); }} placeholder="0" /></div>
                 <div><label>Return Date</label><input type="date" value={returnForm.date} onChange={e=>setReturnForm(f=>({...f,date:e.target.value}))} /></div>
               </div>
-              <div><label>Technician (optional)</label>
-                <select value={returnForm.customer} onChange={e=>setReturnForm(f=>({...f,customer:e.target.value}))}>
+              <div>
+                <label>Customer Name *</label>
+                <select value={returnForm.customer} onChange={e=>setReturnForm(f=>({...f,customer:e.target.value}))}
+                  style={{ borderColor: !returnForm.customer ? "#ef4444" : "#3a2e10" }}>
+                  <option value="">Select customer...</option>
+                  {customers.map((c:any)=><option key={c.id||c.name} value={c.name}>{c.name}</option>)}
+                </select>
+                {!returnForm.customer && <div style={{ fontSize:10, color:"#f87171", marginTop:2 }}>Required — select the customer returning the item</div>}
+              </div>
+              <div>
+                <label>Technician *</label>
+                <select value={returnForm.technician} onChange={e=>setReturnForm(f=>({...f,technician:e.target.value}))}
+                  style={{ borderColor: !returnForm.technician ? "#ef4444" : "#3a2e10" }}>
                   <option value="">Select technician...</option>
                   {technicians.map(t=><option key={t} value={t}>{t}</option>)}
                 </select>
+                {!returnForm.technician && <div style={{ fontSize:10, color:"#f87171", marginTop:2 }}>Required — select who handled the return</div>}
               </div>
               {NEW_USED_CATEGORIES.includes(returnForm.categoryKey) && Number(returnForm.qty)>0 && (
                 <div style={{ background:"#0a0800", border:"1px solid #3a2e10", borderRadius:8, padding:"10px 12px" }}>
@@ -2859,7 +2877,7 @@ export default function App() {
             </div>
             <div style={{ display:"flex", gap:10, marginTop:18, justifyContent:"flex-end" }}>
               <button className="btn btn-outline" onClick={()=>setShowReturnForm(false)}>Cancel</button>
-              <button className="btn btn-gold" onClick={submitReturn} disabled={saving || !returnForm.productName}>{saving?"Saving...":"Add Return to Stock"}</button>
+              <button className="btn btn-gold" onClick={submitReturn} disabled={saving || !returnForm.productName || !returnForm.customer || !returnForm.technician}>{saving?"Saving...":"Add Return to Stock"}</button>
             </div>
           </div>
         </div>
