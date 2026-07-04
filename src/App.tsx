@@ -2749,7 +2749,7 @@ export default function App() {
                   <label>Customer *</label>
                   <div style={{ position:"relative" }}>
                     <input placeholder="Type to search..." value={selectedCustomer} onChange={e=>setSelectedCustomer(e.target.value)} />
-                    {selectedCustomer && !customers.find(c=>c.name===selectedCustomer) && customers.filter(c=>c.name?.toLowerCase().includes(selectedCustomer.toLowerCase())).length>0 && (
+                    {selectedCustomer && !customers.find(c=>c.name?.toLowerCase()===selectedCustomer.toLowerCase()) && customers.filter(c=>c.name?.toLowerCase().includes(selectedCustomer.toLowerCase())).length>0 && (
                       <div style={{ position:"absolute", top:"110%", left:0, right:0, background:"#1a1500", border:"1px solid #c9a84c", borderRadius:8, maxHeight:180, overflowY:"auto", zIndex:50 }}>
                         {customers.filter(c=>c.name?.toLowerCase().includes(selectedCustomer.toLowerCase())).slice(0,10).map(c=>(
                           <div key={c.id} onClick={()=>setSelectedCustomer(c.name)} style={{ padding:"7px 12px", cursor:"pointer", fontSize:12, color:"#f0e6c0", borderBottom:"1px solid #2a2000" }} onMouseEnter={e=>e.currentTarget.style.background="#2a1a00"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>{c.name}</div>
