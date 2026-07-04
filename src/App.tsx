@@ -891,6 +891,7 @@ export default function App() {
   const [editingHistory, setEditingHistory] = useState(null); // holds purchase history row being edited
   const [historyEditForm, setHistoryEditForm] = useState({ item:"", vendor:"", date:"", received:"" }); // holds the original log being edited
   const [selectedCustomer, setSelectedCustomer] = useState("");
+  const [logCustomerSearch, setLogCustomerSearch] = useState("");
   const [serviceDate, setServiceDate] = useState(today());
   const [logWarehouse, setLogWarehouse] = useState(roleWarehouse || "Al Quoz Warehouse");
   const [logProducts, setLogProducts] = useState([{ ...emptyProduct }]);
@@ -1334,6 +1335,7 @@ export default function App() {
     }));
     setEditingLog(log);
     setSelectedCustomer(log.customer || "");
+    setLogCustomerSearch("");  // clear search so green tick shows existing customer
     setServiceDate(String(log.date).split("T")[0]);
     setLogWarehouse(log.warehouse || (roleWarehouse || "Al Quoz Warehouse"));
     setLogProducts(normalized.length > 0 ? normalized : [{ ...emptyProduct }]);
@@ -1456,7 +1458,7 @@ export default function App() {
 
         setSyncStatus("synced");
         setEditingLog(null);
-        setSelectedCustomer(""); setLogProducts([{...emptyProduct}]); setLogNotes(""); setLogTechnician("");
+        setSelectedCustomer(""); setLogCustomerSearch(""); setLogProducts([{...emptyProduct}]); setLogNotes(""); setLogTechnician("");
         setShowLogForm(false);
         alert("✓ Log updated successfully. Stock has been adjusted.");
       } catch (err) {
@@ -1557,7 +1559,7 @@ export default function App() {
         });
         setLogs(l => [entry, ...l]);
         setSyncStatus("synced");
-        setSelectedCustomer(""); setLogProducts([{...emptyProduct}]); setLogNotes(""); setLogTechnician(""); setShowLogForm(false);
+        setSelectedCustomer(""); setLogCustomerSearch(""); setLogProducts([{...emptyProduct}]); setLogNotes(""); setLogTechnician(""); setShowLogForm(false);
       } catch (err) {
         setSyncStatus("error");
         alert("⚠ Save Failed!\n\n" + (err?.message||""));
@@ -2748,13 +2750,27 @@ export default function App() {
                 <div>
                   <label>Customer *</label>
                   <div style={{ position:"relative" }}>
-                    <input placeholder="Type to search..." value={selectedCustomer} onChange={e=>setSelectedCustomer(e.target.value)} />
-                    {selectedCustomer && !customers.find(c=>c.name?.toLowerCase()===selectedCustomer.toLowerCase()) && customers.filter(c=>c.name?.toLowerCase().includes(selectedCustomer.toLowerCase())).length>0 && (
+                    <input placeholder="Type to search..."
+                      value={logCustomerSearch}
+                      onChange={e=>{ setLogCustomerSearch(e.target.value); setSelectedCustomer(""); }}
+                      onFocus={()=>{ if(selectedCustomer) setLogCustomerSearch(selectedCustomer); }}
+                      style={{ borderColor: logCustomerSearch && !selectedCustomer ? "#facc15" : "#3a2e10" }}
+                    />
+                    {selectedCustomer && !logCustomerSearch && (
+                      <div style={{ fontSize:10, color:"#4ade80", marginTop:2 }}>✓ {selectedCustomer}</div>
+                    )}
+                    {logCustomerSearch && customers.filter(c=>c.name?.toLowerCase().includes(logCustomerSearch.toLowerCase())).length>0 && (
                       <div style={{ position:"absolute", top:"110%", left:0, right:0, background:"#1a1500", border:"1px solid #c9a84c", borderRadius:8, maxHeight:180, overflowY:"auto", zIndex:50 }}>
-                        {customers.filter(c=>c.name?.toLowerCase().includes(selectedCustomer.toLowerCase())).slice(0,10).map(c=>(
-                          <div key={c.id} onClick={()=>setSelectedCustomer(c.name)} style={{ padding:"7px 12px", cursor:"pointer", fontSize:12, color:"#f0e6c0", borderBottom:"1px solid #2a2000" }} onMouseEnter={e=>e.currentTarget.style.background="#2a1a00"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>{c.name}</div>
+                        {customers.filter(c=>c.name?.toLowerCase().includes(logCustomerSearch.toLowerCase())).slice(0,20).map(c=>(
+                          <div key={c.id} onClick={()=>{ setSelectedCustomer(c.name); setLogCustomerSearch(""); }}
+                            style={{ padding:"7px 12px", cursor:"pointer", fontSize:12, color:"#f0e6c0", borderBottom:"1px solid #2a2000" }}
+                            onMouseEnter={e=>e.currentTarget.style.background="#2a1a00"}
+                            onMouseLeave={e=>e.currentTarget.style.background="transparent"}>{c.name}</div>
                         ))}
                       </div>
+                    )}
+                    {logCustomerSearch && customers.filter(c=>c.name?.toLowerCase().includes(logCustomerSearch.toLowerCase())).length===0 && (
+                      <div style={{ position:"absolute", top:"110%", left:0, right:0, background:"#1a1500", border:"1px solid #c9a84c", borderRadius:8, padding:"10px 12px", zIndex:50, fontSize:12, color:"#7a6a30" }}>No customers found</div>
                     )}
                   </div>
                 </div>
@@ -2841,7 +2857,7 @@ export default function App() {
               <div><label>Notes (optional)</label><textarea value={logNotes} onChange={e=>setLogNotes(e.target.value)} placeholder="Any notes..." rows={2} style={{ resize:"vertical" }} /></div>
             </div>
             <div style={{ display:"flex", gap:10, marginTop:18, justifyContent:"flex-end" }}>
-              <button className="btn btn-outline" onClick={()=>{ setShowLogForm(false); setEditingLog(null); setSelectedCustomer(""); setLogProducts([{...emptyProduct}]); setLogNotes(""); setLogTechnician(""); }}>Cancel</button>
+              <button className="btn btn-outline" onClick={()=>{ setShowLogForm(false); setEditingLog(null); setSelectedCustomer(""); setLogCustomerSearch(""); setLogProducts([{...emptyProduct}]); setLogNotes(""); setLogTechnician(""); }}>Cancel</button>
               <button className="btn btn-gold" onClick={editingLog ? submitEditLog : submitLog} disabled={saving}>{saving ? "Saving..." : editingLog ? "✓ Save Changes" : "Save Service Log"}</button>
             </div>
           </div>
