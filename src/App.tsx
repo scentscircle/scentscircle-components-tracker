@@ -978,6 +978,7 @@ export default function App() {
         item: h.item || "", vendor: h.vendor || "", stockInHand: Math.round((Number(h.stock_in_hand)||0)*100)/100,
         received: Math.round((Number(h.received)||0)*100)/100, closing: Math.round((Number(h.closing)||0)*100)/100, unit: h.unit || "",
         type: h.type || "purchase", from: h.from || "", to: h.to || "", qty: Number(h.qty) || 0,
+        machineCodes: h.machine_codes || [], technician: h.technician || "",
       }));
 
       const oilsData = (oilsRes.data || []).map(o => o.name);
@@ -1743,6 +1744,7 @@ export default function App() {
           stock_in_hand: returnEntry.stockInHand, received: returnEntry.received, closing: returnEntry.closing,
           unit: returnEntry.unit, type: returnEntry.type, condition: returnEntry.condition,
           machine_codes: isNewUsed ? returnForm.machineCodes : null,
+          technician: returnForm.technician || null,
         });
         if (error) throw error;
         if (isNewUsed) {
