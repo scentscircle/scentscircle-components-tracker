@@ -1011,15 +1011,35 @@ export default function App() {
     return () => clearInterval(interval);
   }, [fetchData, saving]);
 
+  // Retry a function up to maxRetries times on network failure
+  async function withRetry(fn, maxRetries = 3, delayMs = 1500) {
+    let lastError;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        return await fn();
+      } catch (err) {
+        lastError = err;
+        const msg = (err?.message || "").toLowerCase();
+        const isNetwork = msg.includes("failed to fetch") || msg.includes("networkerror") || msg.includes("timeout") || msg.includes("network");
+        if (!isNetwork || attempt === maxRetries) throw err;
+        await new Promise(r => setTimeout(r, delayMs * attempt)); // wait longer each retry
+      }
+    }
+    throw lastError;
+  }
+
   async function adjustStockAtomic(rows) {
     const results = [];
     for (const r of rows) {
-      const { data, error } = await supabase.rpc("adjust_stock", {
-        p_warehouse: r.warehouse, p_category_key: r.categoryKey, p_product_name: r.productName, p_delta: r.delta,
-        p_condition: r.condition || "new",
+      const result = await withRetry(async () => {
+        const { data, error } = await supabase.rpc("adjust_stock", {
+          p_warehouse: r.warehouse, p_category_key: r.categoryKey, p_product_name: r.productName, p_delta: r.delta,
+          p_condition: r.condition || "new",
+        });
+        if (error) throw error;
+        return Number(data);
       });
-      if (error) throw error;
-      results.push({ ...r, newQty: Number(data) });
+      results.push({ ...r, newQty: result });
     }
     return results;
   }
@@ -1277,13 +1297,28 @@ export default function App() {
     const productName = newProductForm.productName.trim();
     if (!productName) { alert("⚠ Please enter a product name before saving."); return; }
     if (categoryKey === "PURE_OIL") {
-      if (pureOilProducts.includes(productName)) { alert("This pure oil already exists."); return; }
+      // Case-insensitive duplicate check
+      const duplicate = pureOilProducts.find(p => p.toLowerCase() === productName.toLowerCase());
+      if (duplicate) { alert(`⚠ "${productName}" already exists as "${duplicate}" in Pure Oil. Duplicate names are not allowed (even with different capitalisation).`); return; }
       setPureOilProducts(p => [...p, productName]);
       try { await supabase.from("pure_oils").insert({ name: productName }); } catch {}
     } else {
       const targetWarehouses = newProductForm.warehouse === "ALL" ? WAREHOUSES : [newProductForm.warehouse];
-      const alreadyExists = targetWarehouses.every(wh => Object.keys(stock[wh]?.[categoryKey]||{}).includes(productName));
-      if (alreadyExists) { alert("This product already exists in this category for the selected warehouse(s)."); return; }
+      // Case-insensitive duplicate check across all target warehouses
+      const duplicateFound = targetWarehouses.some(wh => {
+        const existingNames = Object.keys(stock[wh]?.[categoryKey]||{});
+        return existingNames.find(n => n.toLowerCase() === productName.toLowerCase());
+      });
+      if (duplicateFound) {
+        // Find the exact existing name to show user
+        let existingName = productName;
+        for (const wh of targetWarehouses) {
+          const found = Object.keys(stock[wh]?.[categoryKey]||{}).find(n => n.toLowerCase() === productName.toLowerCase());
+          if (found) { existingName = found; break; }
+        }
+        alert(`⚠ "${productName}" already exists as "${existingName}" in this category. Duplicate names are not allowed (even with different capitalisation).`);
+        return;
+      }
     }
     setSyncStatus("saving"); setSaving(true);
     try {
