@@ -1375,9 +1375,9 @@ export default function App() {
     setLogCustomerSearch("");  // clear search so green tick shows existing customer
     setServiceDate(String(log.date).split("T")[0]);
     setLogWarehouse(log.warehouse || (roleWarehouse || "Al Quoz Warehouse"));
-    const prods = normalized.length > 0 ? normalized : [{ ...emptyProduct }];
-    setLogProducts(prods);
-    setLogProductSearches(prods.map(() => ""));
+    const finalProds = normalized.length > 0 ? normalized : [{ ...emptyProduct }];
+    setLogProducts(finalProds);
+    setLogProductSearches(finalProds.map(() => ""));
     setLogNotes(log.notes || "");
     setLogTechnician(log.technician || "");
     setShowLogForm(true);
