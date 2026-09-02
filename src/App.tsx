@@ -892,6 +892,7 @@ export default function App() {
   const [historyEditForm, setHistoryEditForm] = useState({ item:"", vendor:"", date:"", received:"" }); // holds the original log being edited
   const [selectedCustomer, setSelectedCustomer] = useState("");
   const [logCustomerSearch, setLogCustomerSearch] = useState("");
+  const [logProductSearches, setLogProductSearches] = useState<string[]>([]); // per-row product search
   const [serviceDate, setServiceDate] = useState(today());
   const [logWarehouse, setLogWarehouse] = useState(roleWarehouse || "Al Quoz Warehouse");
   const [logProducts, setLogProducts] = useState([{ ...emptyProduct }]);
@@ -1254,8 +1255,8 @@ export default function App() {
     });
   }, [stockHistory, purchaseFilterWarehouse]);
 
-  function addLogProduct() { setLogProducts(ps => [...ps, { ...emptyProduct }]); }
-  function removeLogProduct(i) { setLogProducts(ps => ps.filter((_,idx)=>idx!==i)); }
+  function addLogProduct() { setLogProducts(ps => [...ps, { ...emptyProduct }]); setLogProductSearches(prev => [...prev, ""]); }
+  function removeLogProduct(i) { setLogProducts(ps => ps.filter((_,idx)=>idx!==i)); setLogProductSearches(prev => prev.filter((_,idx)=>idx!==i)); }
   function updateLogProduct(i, field, val) {
     setLogProducts(ps => ps.map((p,idx) => {
       if (idx!==i) return p;
@@ -1374,7 +1375,9 @@ export default function App() {
     setLogCustomerSearch("");  // clear search so green tick shows existing customer
     setServiceDate(String(log.date).split("T")[0]);
     setLogWarehouse(log.warehouse || (roleWarehouse || "Al Quoz Warehouse"));
-    setLogProducts(normalized.length > 0 ? normalized : [{ ...emptyProduct }]);
+    const prods = normalized.length > 0 ? normalized : [{ ...emptyProduct }];
+    setLogProducts(prods);
+    setLogProductSearches(prods.map(() => ""));
     setLogNotes(log.notes || "");
     setLogTechnician(log.technician || "");
     setShowLogForm(true);
@@ -1595,7 +1598,7 @@ export default function App() {
         });
         setLogs(l => [entry, ...l]);
         setSyncStatus("synced");
-        setSelectedCustomer(""); setLogCustomerSearch(""); setLogProducts([{...emptyProduct}]); setLogNotes(""); setLogTechnician(""); setShowLogForm(false);
+        setSelectedCustomer(""); setLogCustomerSearch(""); setLogProducts([{...emptyProduct}]); setLogProductSearches([""]); setLogNotes(""); setLogTechnician(""); setShowLogForm(false);
       } catch (err) {
         setSyncStatus("error");
         alert("⚠ Save Failed!\n\n" + (err?.message||""));
@@ -1839,18 +1842,24 @@ export default function App() {
       })();
       setEditCustomerId(null);
     } else {
-      const newCustomer = { ...customerForm, id:Date.now() };
-      setCustomers(cs => [...cs, newCustomer]);
       (async () => {
         try {
-          const { error } = await supabase.from("customers").insert({
-            id: newCustomer.id, name: newCustomer.name, location: newCustomer.location || null, machines: newCustomer.machines || null,
-          });
+          // Let Supabase generate the ID (don't pass id — use auto-increment)
+          const { data, error } = await supabase.from("customers").insert({
+            name: customerForm.name.trim(), location: customerForm.location || null, machines: customerForm.machines || null,
+          }).select().single();
           if (error) throw error;
+          // Use the real ID returned from Supabase
+          setCustomers(cs => [...cs, { ...customerForm, id: data.id, name: data.name }]);
           setSyncStatus("synced");
-        } catch { setSyncStatus("error"); }
+          setCustomerForm({ ...emptyCustomer }); setShowCustomerForm(false);
+        } catch(err) {
+          setSyncStatus("error");
+          alert("⚠ Failed to save customer!\n\n" + (err?.message||"Unknown error") + "\n\nPlease try again.");
+        }
         setSaving(false);
       })();
+      return; // Don't close form yet — wait for DB confirmation
     }
     setCustomerForm({ ...emptyCustomer }); setShowCustomerForm(false);
   }
@@ -2832,15 +2841,55 @@ export default function App() {
                           {SERVICE_PRODUCT_TYPES.map(t=><option key={t.key} value={t.key}>{t.label}</option>)}
                         </select>
                       </div>
-                      <div>
+                      <div style={{ position:"relative" }}>
                         <label>Product</label>
-                        {(()=>{ const prods = p.categoryKey==="FINISHED_AROMA_OIL" ? getFinishedAromaOilProducts(logWarehouse) : getAllProducts(p.categoryKey); return prods.length>0 ? (
-                          <select value={p.productName} onChange={e=>updateLogProduct(i,"productName",e.target.value)}>
-                            {prods.map(pr=><option key={pr} value={pr}>{pr}</option>)}
-                          </select>
-                        ) : (
-                          <input value={p.productName} onChange={e=>updateLogProduct(i,"productName",e.target.value)} placeholder="Enter product name" />
-                        ); })()}
+                        {(()=>{
+                          const prods = p.categoryKey==="FINISHED_AROMA_OIL" ? getFinishedAromaOilProducts(logWarehouse) : getAllProducts(p.categoryKey);
+                          const search = logProductSearches[i] || "";
+                          const filtered = prods.filter(pr => pr.toLowerCase().includes(search.toLowerCase()));
+                          if (prods.length === 0) {
+                            return <input value={p.productName} onChange={e=>updateLogProduct(i,"productName",e.target.value)} placeholder="Enter product name" />;
+                          }
+                          return (
+                            <>
+                              <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+                                <input
+                                  placeholder={p.productName || "🔍 Search product..."}
+                                  value={search}
+                                  onChange={e=>{
+                                    const val = e.target.value;
+                                    setLogProductSearches(prev => { const a=[...prev]; a[i]=val; return a; });
+                                    if (!val) {} // keep existing selection visible as placeholder
+                                  }}
+                                  style={{ flex:1, borderColor: !p.productName ? "#ef4444" : search ? "#facc15" : "#3a2e10", fontSize:12 }}
+                                />
+                                {search && <button onClick={()=>setLogProductSearches(prev=>{const a=[...prev];a[i]="";return a;})} style={{ background:"transparent", border:"none", color:"#7a6a30", cursor:"pointer", fontSize:14, padding:"0 4px" }}>✕</button>}
+                              </div>
+                              {p.productName && !search && (
+                                <div style={{ fontSize:10, color:"#4ade80", marginTop:2 }}>✓ {p.productName}</div>
+                              )}
+                              {search && (
+                                <div style={{ position:"absolute", top:"100%", left:0, right:0, background:"#1a1500", border:"1px solid #c9a84c", borderRadius:8, maxHeight:200, overflowY:"auto", zIndex:200 }}>
+                                  <div style={{ padding:"4px 10px", fontSize:9, color:"#7a6a30", borderBottom:"1px solid #2a2000", position:"sticky", top:0, background:"#1a1500" }}>
+                                    {filtered.length} result{filtered.length!==1?"s":""} {filtered.length>8?"— scroll for more ↓":""}
+                                  </div>
+                                  {filtered.length===0 && <div style={{ padding:"10px 12px", fontSize:11, color:"#7a6a30" }}>No matches found</div>}
+                                  {filtered.slice(0,50).map(pr=>(
+                                    <div key={pr}
+                                      onClick={()=>{
+                                        updateLogProduct(i,"productName",pr);
+                                        setLogProductSearches(prev=>{const a=[...prev];a[i]="";return a;});
+                                      }}
+                                      style={{ padding:"8px 12px", cursor:"pointer", fontSize:12, color:"#f0e6c0", borderBottom:"1px solid #2a2000" }}
+                                      onMouseEnter={e=>e.currentTarget.style.background="#2a1a00"}
+                                      onMouseLeave={e=>e.currentTarget.style.background="transparent"}
+                                    >{pr}</div>
+                                  ))}
+                                </div>
+                              )}
+                            </>
+                          );
+                        })()}
                       </div>
                       {NEW_USED_CATEGORIES.includes(p.categoryKey) && (
                         <div>
@@ -2894,7 +2943,7 @@ export default function App() {
               <div><label>Notes (optional)</label><textarea value={logNotes} onChange={e=>setLogNotes(e.target.value)} placeholder="Any notes..." rows={2} style={{ resize:"vertical" }} /></div>
             </div>
             <div style={{ display:"flex", gap:10, marginTop:18, justifyContent:"flex-end" }}>
-              <button className="btn btn-outline" onClick={()=>{ setShowLogForm(false); setEditingLog(null); setSelectedCustomer(""); setLogCustomerSearch(""); setLogProducts([{...emptyProduct}]); setLogNotes(""); setLogTechnician(""); }}>Cancel</button>
+              <button className="btn btn-outline" onClick={()=>{ setShowLogForm(false); setEditingLog(null); setSelectedCustomer(""); setLogCustomerSearch(""); setLogProducts([{...emptyProduct}]); setLogProductSearches([""]); setLogNotes(""); setLogTechnician(""); }}>Cancel</button>
               <button className="btn btn-gold" onClick={editingLog ? submitEditLog : submitLog} disabled={saving}>{saving ? "Saving..." : editingLog ? "✓ Save Changes" : "Save Service Log"}</button>
             </div>
           </div>
