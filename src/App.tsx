@@ -937,7 +937,7 @@ export default function App() {
       const [logsRes, stockRes, customersRes, historyRes, oilsRes, thresholdsRes, techRes] = await Promise.all([
         supabase.from("logs").select("*").order("created_at", { ascending: false }),
         supabase.from("stock").select("*"),
-        supabase.from("customers").select("*"),
+        supabase.from("customers").select("*").order("name", { ascending: true }).range(0, 9999),
         supabase.from("stock_history").select("*").order("created_at", { ascending: false }),
         supabase.from("pure_oils").select("*").order("name", { ascending: true }),
         supabase.from("product_thresholds").select("*"),
@@ -1826,6 +1826,16 @@ export default function App() {
 
   function saveCustomer() {
     if (!customerForm.name.trim()) return;
+    // Duplicate name check (case-insensitive)
+    if (editCustomerId === null) {
+      const duplicate = customers.find(c => c.name?.toLowerCase().trim() === customerForm.name.toLowerCase().trim());
+      if (duplicate) {
+        alert(`⚠ Customer "${duplicate.name}" already exists.
+
+Please search for the existing customer instead of adding a new one.`);
+        return;
+      }
+    }
     setSyncStatus("saving"); setSaving(true);
     if (editCustomerId!==null) {
       const updatedCustomer = { ...customerForm, id:editCustomerId };
@@ -2041,7 +2051,7 @@ export default function App() {
         supabase.from("logs").select("*").order("created_at",{ascending:false}),
         supabase.from("stock").select("*"),
         supabase.from("stock_history").select("*").order("created_at",{ascending:false}),
-        supabase.from("customers").select("*"),
+        supabase.from("customers").select("*").order("name", { ascending: true }).range(0, 9999),
         supabase.from("pure_oils").select("*"),
         supabase.from("technicians").select("*"),
         supabase.from("app_roles").select("*"),
