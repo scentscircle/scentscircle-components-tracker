@@ -1844,12 +1844,13 @@ export default function App() {
     } else {
       (async () => {
         try {
-          // Let Supabase generate the ID (don't pass id — use auto-increment)
+          // Query max existing ID and increment by 1
+          const { data: maxData } = await supabase.from("customers").select("id").order("id", { ascending: false }).limit(1).single();
+          const newId = ((maxData?.id || 0) as number) + 1;
           const { data, error } = await supabase.from("customers").insert({
-            name: customerForm.name.trim(), location: customerForm.location || null, machines: customerForm.machines || null,
+            id: newId, name: customerForm.name.trim(), location: customerForm.location || null, machines: customerForm.machines || null,
           }).select().single();
           if (error) throw error;
-          // Use the real ID returned from Supabase
           setCustomers(cs => [...cs, { ...customerForm, id: data.id, name: data.name }]);
           setSyncStatus("synced");
           setCustomerForm({ ...emptyCustomer }); setShowCustomerForm(false);
