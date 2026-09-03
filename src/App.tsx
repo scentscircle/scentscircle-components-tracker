@@ -911,6 +911,7 @@ export default function App() {
   const [showReturnForm, setShowReturnForm] = useState(false);
   const [returnForm, setReturnForm] = useState({ categoryKey:"FINISHED_AROMA_OIL", warehouse:roleWarehouse||"Al Quoz Warehouse", productName:"", qty:"", date:today(), customer:"", technician:"", notes:"", machineCodes:[] });
   const [returnProductSearch, setReturnProductSearch] = useState("");
+  const [returnCustomerSearch, setReturnCustomerSearch] = useState("");
   const [stockProductSearch, setStockProductSearch] = useState("");
 
   const [showCustomerForm, setShowCustomerForm] = useState(false);
@@ -1815,6 +1816,7 @@ export default function App() {
         setSyncStatus("synced");
         setShowReturnForm(false);
         setReturnForm({ categoryKey:"FINISHED_AROMA_OIL", warehouse:roleWarehouse||"Al Quoz Warehouse", productName:"", qty:"", date:today(), customer:"", technician:"", notes:"", machineCodes:[] });
+      setReturnCustomerSearch(""); setReturnProductSearch("");
         setReturnProductSearch("");
       } catch (err) {
         setSyncStatus("error");
@@ -3070,14 +3072,39 @@ Please search for the existing customer instead of adding a new one.`);
                 <div><label>Quantity Returned</label><input type="number" min="0" step="0.01" value={returnForm.qty} onChange={e=>{ const val=e.target.value; setReturnForm(f=>{ const num=parseInt(val)||0; const isNewUsed=NEW_USED_CATEGORIES.includes(f.categoryKey); const codes = isNewUsed ? Array.from({length:num},(_,i)=>f.machineCodes?.[i]||"") : f.machineCodes; return {...f,qty:val,machineCodes:codes}; }); }} placeholder="0" /></div>
                 <div><label>Return Date</label><input type="date" value={returnForm.date} onChange={e=>setReturnForm(f=>({...f,date:e.target.value}))} /></div>
               </div>
-              <div>
+              <div style={{ position:"relative" }}>
                 <label>Customer Name *</label>
-                <select value={returnForm.customer} onChange={e=>setReturnForm(f=>({...f,customer:e.target.value}))}
-                  style={{ borderColor: !returnForm.customer ? "#ef4444" : "#3a2e10" }}>
-                  <option value="">Select customer...</option>
-                  {customers.map((c:any)=><option key={c.id||c.name} value={c.name}>{c.name}</option>)}
-                </select>
-                {!returnForm.customer && <div style={{ fontSize:10, color:"#f87171", marginTop:2 }}>Required — select the customer returning the item</div>}
+                <input
+                  placeholder={returnForm.customer || "🔍 Search customer..."}
+                  value={returnCustomerSearch}
+                  onChange={e=>{ setReturnCustomerSearch(e.target.value); setReturnForm(f=>({...f,customer:""})); }}
+                  style={{ borderColor: !returnForm.customer ? "#ef4444" : returnCustomerSearch ? "#facc15" : "#3a2e10" }}
+                />
+                {returnForm.customer && !returnCustomerSearch && (
+                  <div style={{ fontSize:10, color:"#4ade80", marginTop:2 }}>✓ {returnForm.customer}</div>
+                )}
+                {!returnForm.customer && !returnCustomerSearch && (
+                  <div style={{ fontSize:10, color:"#f87171", marginTop:2 }}>Required — type to search the customer returning the item</div>
+                )}
+                {returnCustomerSearch && (() => {
+                  const filtered = customers.filter((c:any) => c.name?.toLowerCase().includes(returnCustomerSearch.toLowerCase()));
+                  return (
+                    <div style={{ position:"absolute", top:"100%", left:0, right:0, background:"#1a1500", border:"1px solid #c9a84c", borderRadius:8, maxHeight:200, overflowY:"auto", zIndex:300 }}>
+                      <div style={{ padding:"4px 10px", fontSize:9, color:"#7a6a30", borderBottom:"1px solid #2a2000", position:"sticky", top:0, background:"#1a1500" }}>
+                        {filtered.length} customer{filtered.length!==1?"s":""} {filtered.length>8?"— scroll for more ↓":""}
+                      </div>
+                      {filtered.length===0 && <div style={{ padding:"10px 12px", fontSize:11, color:"#7a6a30" }}>No customers found</div>}
+                      {filtered.slice(0,50).map((c:any)=>(
+                        <div key={c.id||c.name}
+                          onClick={()=>{ setReturnForm(f=>({...f,customer:c.name})); setReturnCustomerSearch(""); }}
+                          style={{ padding:"8px 12px", cursor:"pointer", fontSize:12, color:"#f0e6c0", borderBottom:"1px solid #2a2000" }}
+                          onMouseEnter={e=>e.currentTarget.style.background="#2a1a00"}
+                          onMouseLeave={e=>e.currentTarget.style.background="transparent"}
+                        >{c.name}</div>
+                      ))}
+                    </div>
+                  );
+                })()}
               </div>
               <div>
                 <label>Technician *</label>
